@@ -173,3 +173,56 @@ Always run typecheck after changes:
 ```bash
 npm run typecheck
 ```
+
+## Maintaining a personal fork
+
+If you use Paseo from a personal fork, keep the remotes split clearly:
+
+- `origin` = your fork
+- `upstream` = `getpaseo/paseo`
+
+Recommended baseline:
+
+```bash
+git fetch upstream --prune
+git fetch origin --prune
+git switch main
+git merge --ff-only upstream/main
+git push origin main
+```
+
+Keep local-only behavior on top of your fork's `main`, not only on an unmerged side branch, if that behavior is required for your daily build/install flow.
+
+### Local fork policy: preserve exact subdirectory workspaces
+
+This fork depends on one workspace invariant from the glossary: workspace `cwd` must stay exact and stable, including git subdirectories.
+
+Concrete requirement:
+
+- If you add `/path/to/repo/subdir`, the workspace `cwd` must remain `/path/to/repo/subdir`, not fall back to the git top-level repo root.
+- If you create a new workspace/worktree from that workspace, the new workspace must land in the corresponding subdirectory inside the new worktree, not in the worktree root.
+- Project grouping may still use git metadata like the main repo root or remote URL. Only the workspace `cwd` must stay exact.
+
+When pulling from upstream, treat changes around project/workspace/worktree resolution as high-risk merge areas. In particular, review changes touching:
+
+- `packages/server/src/server/session.ts`
+- `packages/server/src/server/worktree-session.ts`
+- `packages/server/src/server/paseo-worktree-service.ts`
+- `packages/app/src/components/sidebar-workspace-list.tsx`
+- `packages/app/src/hooks/use-active-worktree-new-action.ts`
+- `packages/app/src/utils/workspace-archive-navigation.ts`
+- `packages/app/src/utils/sidebar-workspace-directory.ts`
+
+After any upstream merge or rebase that touches those paths, re-run the narrow checks for this invariant before shipping your fork:
+
+```bash
+npx vitest run packages/server/src/server/session.test.ts --bail=1
+npx vitest run packages/server/src/server/worktree-session.test.ts --bail=1
+npx vitest run packages/app/src/utils/workspace-archive-navigation.test.ts --bail=1
+npx vitest run packages/app/src/utils/sidebar-workspace-directory.test.ts --bail=1
+npx playwright test packages/app/e2e/workspace-subdirectory-cwd.spec.ts
+npm run lint
+npm run typecheck
+```
+
+If upstream refactors the workspace model, preserve the behavior above even if the implementation moves. The invariant matters more than the old file layout.
