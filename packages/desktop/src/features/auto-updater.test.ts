@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("electron", () => ({
   app: {
     getPath: vi.fn(),
+    isPackaged: true,
   },
 }));
 
@@ -16,6 +17,8 @@ vi.mock("electron-updater", () => ({
 
 import {
   bucketFromStagingUserId,
+  checkForAppUpdate,
+  downloadAndInstallUpdate,
   resolveStagingUserId,
   rolloutManifestSchema,
   shouldAdmitToRollout,
@@ -185,5 +188,34 @@ describe("shouldAdmitToRollout", () => {
     } finally {
       await rm(tempDir, { force: true, recursive: true });
     }
+  });
+
+  it("keeps packaged builds opted out of app update checks", async () => {
+    await expect(
+      checkForAppUpdate({
+        currentVersion: "0.1.72",
+        releaseChannel: "stable",
+      }),
+    ).resolves.toEqual({
+      hasUpdate: false,
+      readyToInstall: false,
+      currentVersion: "0.1.72",
+      latestVersion: "0.1.72",
+      body: null,
+      date: null,
+    });
+  });
+
+  it("refuses app update installs when this fork disables desktop updates", async () => {
+    await expect(
+      downloadAndInstallUpdate({
+        currentVersion: "0.1.72",
+        releaseChannel: "stable",
+      }),
+    ).resolves.toEqual({
+      installed: false,
+      version: "0.1.72",
+      message: "Desktop app updates are disabled in this build.",
+    });
   });
 });

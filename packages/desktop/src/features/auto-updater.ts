@@ -36,6 +36,10 @@ export const rolloutManifestSchema = z.object({
   releaseDate: z.string().optional().catch(undefined),
 });
 
+// This local fork ships hand-built desktop packages from the user's repo.
+// Leave upstream auto-updates off so an official release cannot overwrite local patches.
+const DESKTOP_APP_UPDATES_ENABLED = false;
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -201,6 +205,12 @@ async function performQuitAndInstall(onBeforeQuit?: () => Promise<void>): Promis
   autoUpdater.quitAndInstall(/* isSilent */ false, /* isForceRunAfter */ true);
 }
 
+function resetUpdateState(): void {
+  cachedUpdateInfo = null;
+  downloadedUpdateVersion = null;
+  downloading = false;
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -212,6 +222,15 @@ export async function checkForAppUpdate({
   currentVersion: string;
   releaseChannel: AppReleaseChannel;
 }): Promise<AppUpdateCheckResult> {
+  if (!DESKTOP_APP_UPDATES_ENABLED) {
+    resetUpdateState();
+    return buildCheckResult({
+      currentVersion,
+      hasUpdate: false,
+      readyToInstall: false,
+    });
+  }
+
   if (!app.isPackaged) {
     return buildCheckResult({
       currentVersion,
@@ -287,6 +306,15 @@ export async function downloadAndInstallUpdate(
   },
   onBeforeQuit?: () => Promise<void>,
 ): Promise<AppUpdateInstallResult> {
+  if (!DESKTOP_APP_UPDATES_ENABLED) {
+    resetUpdateState();
+    return {
+      installed: false,
+      version: currentVersion,
+      message: "Desktop app updates are disabled in this build.",
+    };
+  }
+
   if (!app.isPackaged) {
     return {
       installed: false,

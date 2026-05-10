@@ -3,14 +3,22 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 async function loadModuleForPlatform(platform: "web" | "ios" | "android") {
   vi.resetModules();
   vi.doMock("react-native", () => ({ Platform: { OS: platform } }));
+  vi.doMock("@/desktop/host", () => ({ isElectronRuntime: () => true }));
   return import("./desktop-updates");
 }
 
 describe("desktop-updates helpers", () => {
   afterEach(() => {
     vi.doUnmock("react-native");
+    vi.doUnmock("@/desktop/host");
     vi.restoreAllMocks();
     vi.resetModules();
+  });
+
+  it("keeps desktop app update UI hidden in this local fork", async () => {
+    const { shouldShowDesktopUpdateSection } = await loadModuleForPlatform("web");
+
+    expect(shouldShowDesktopUpdateSection()).toBe(false);
   });
 
   it("normalizes versions for app-daemon comparisons", async () => {

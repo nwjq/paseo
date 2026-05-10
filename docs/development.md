@@ -198,6 +198,7 @@ This fork's goal is simple:
 - keep local behavior you rely on
 - pull upstream changes as much as possible
 - do not let unrelated upstream breakage block syncing or keeping your local behavior
+- keep desktop auto-updates disabled unless you intentionally move the updater feed off upstream
 
 ### Local fork policy: preserve exact subdirectory workspaces
 
@@ -239,3 +240,18 @@ npx playwright test packages/app/e2e/workspace-subdirectory-cwd.spec.ts
 If upstream refactors the workspace model, preserve the behavior above even if the implementation moves. The invariant matters more than the old file layout.
 
 Unrelated upstream failures elsewhere in the repo are not blockers for this fork policy. The decision point is whether this exact subdirectory workspace invariant still holds after syncing.
+
+### Local fork policy: keep desktop auto-updates disabled
+
+This fork still uses the upstream desktop app identity and package name. The published updater feed points at `getpaseo/paseo`, so enabling desktop auto-updates would download official upstream desktop packages and overwrite local fork-only behavior on exit.
+
+For this fork:
+
+- Desktop app auto-updates stay disabled by default.
+- Manual local install of your own `.deb` is the supported update path.
+- If you ever want auto-updates back, move the updater feed to your own published releases first. Do not re-enable the upstream feed in place.
+
+When syncing upstream, treat changes in these files as high-risk:
+
+- `packages/desktop/src/features/auto-updater.ts`
+- `packages/app/src/desktop/updates/desktop-updates.ts`
