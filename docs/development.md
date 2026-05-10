@@ -193,6 +193,12 @@ git push origin main
 
 Keep local-only behavior on top of your fork's `main`, not only on an unmerged side branch, if that behavior is required for your daily build/install flow.
 
+This fork's goal is simple:
+
+- keep local behavior you rely on
+- pull upstream changes as much as possible
+- do not let unrelated upstream breakage block syncing or keeping your local behavior
+
 ### Local fork policy: preserve exact subdirectory workspaces
 
 This fork depends on one workspace invariant from the glossary: workspace `cwd` must stay exact and stable, including git subdirectories.
@@ -213,7 +219,7 @@ When pulling from upstream, treat changes around project/workspace/worktree reso
 - `packages/app/src/utils/workspace-archive-navigation.ts`
 - `packages/app/src/utils/sidebar-workspace-directory.ts`
 
-After any upstream merge or rebase that touches those paths, re-run the narrow checks for this invariant before shipping your fork:
+After any upstream merge or rebase that touches those paths, re-run only the narrow checks for this invariant before shipping your fork:
 
 ```bash
 npx vitest run packages/server/src/server/session.test.ts --bail=1
@@ -221,8 +227,8 @@ npx vitest run packages/server/src/server/worktree-session.test.ts --bail=1
 npx vitest run packages/app/src/utils/workspace-archive-navigation.test.ts --bail=1
 npx vitest run packages/app/src/utils/sidebar-workspace-directory.test.ts --bail=1
 npx playwright test packages/app/e2e/workspace-subdirectory-cwd.spec.ts
-npm run lint
-npm run typecheck
 ```
 
 If upstream refactors the workspace model, preserve the behavior above even if the implementation moves. The invariant matters more than the old file layout.
+
+Unrelated upstream failures elsewhere in the repo are not blockers for this fork policy. The decision point is whether this exact subdirectory workspace invariant still holds after syncing.
