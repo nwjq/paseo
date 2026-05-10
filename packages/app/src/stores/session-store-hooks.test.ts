@@ -232,6 +232,52 @@ describe("useWorkspaceStructure", () => {
     });
     expect(result.current).not.toBe(before);
   });
+
+  it("prefers an exact subdirectory creation dir over the repo root fallback", () => {
+    const workspace = createWorkspace({
+      id: "workspace-subdir",
+      projectId: "project-a",
+      projectDisplayName: "Project A",
+      projectRootPath: "/repo/main",
+      workspaceDirectory: "/repo/main/packages/app",
+      workspaceKind: "local_checkout",
+    });
+    initializeWorkspaces([workspace]);
+
+    const { result } = renderHook(() => useWorkspaceStructure(SERVER_ID));
+
+    expect(result.current.projects[0]).toMatchObject({
+      projectRootPath: "/repo/main",
+      iconWorkingDir: "/repo/main",
+      creationWorkingDir: "/repo/main/packages/app",
+    });
+  });
+
+  it("prefers a checkout subdirectory over a worktree path for project-level creation", () => {
+    const worktree = createWorkspace({
+      id: "workspace-worktree",
+      projectId: "project-a",
+      projectDisplayName: "Project A",
+      projectRootPath: "/repo/main",
+      workspaceDirectory: "/tmp/.paseo/worktrees/feature/packages/app",
+      workspaceKind: "worktree",
+      name: "feature",
+    });
+    const checkout = createWorkspace({
+      id: "workspace-checkout",
+      projectId: "project-a",
+      projectDisplayName: "Project A",
+      projectRootPath: "/repo/main",
+      workspaceDirectory: "/repo/main/packages/app",
+      workspaceKind: "local_checkout",
+      name: "main",
+    });
+    initializeWorkspaces([worktree, checkout]);
+
+    const { result } = renderHook(() => useWorkspaceStructure(SERVER_ID));
+
+    expect(result.current.projects[0]?.creationWorkingDir).toBe("/repo/main/packages/app");
+  });
 });
 
 describe("useWorkspaceKeys", () => {

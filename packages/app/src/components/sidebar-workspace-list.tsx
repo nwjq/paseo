@@ -1175,10 +1175,10 @@ function ProjectHeaderRow({
   const projectCreationDirectory = useMemo(
     () =>
       resolveProjectCreationDirectory({
-        projectIconWorkingDir: project.iconWorkingDir,
+        projectIconWorkingDir: project.creationWorkingDir,
         workspaceDirectory: workspace?.workspaceDirectory,
       }),
-    [project.iconWorkingDir, workspace?.workspaceDirectory],
+    [project.creationWorkingDir, workspace?.workspaceDirectory],
   );
   const projectWorkspaceLocationLabel = useMemo(
     () =>

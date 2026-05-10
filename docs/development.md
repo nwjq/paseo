@@ -214,16 +214,23 @@ When pulling from upstream, treat changes around project/workspace/worktree reso
 - `packages/server/src/server/session.ts`
 - `packages/server/src/server/worktree-session.ts`
 - `packages/server/src/server/paseo-worktree-service.ts`
+- `packages/app/src/stores/session-store-hooks.ts`
+- `packages/app/src/hooks/use-sidebar-workspaces-list.ts`
 - `packages/app/src/components/sidebar-workspace-list.tsx`
 - `packages/app/src/hooks/use-active-worktree-new-action.ts`
 - `packages/app/src/utils/workspace-archive-navigation.ts`
 - `packages/app/src/utils/sidebar-workspace-directory.ts`
+
+The frontend risk is not only the active-workspace actions. The project header fallback path also matters: when a project contains subdirectory workspaces, project-level "New workspace" must default to that exact subdirectory execution path, not the git repo root.
 
 After any upstream merge or rebase that touches those paths, re-run only the narrow checks for this invariant before shipping your fork:
 
 ```bash
 npx vitest run packages/server/src/server/session.test.ts --bail=1
 npx vitest run packages/server/src/server/worktree-session.test.ts --bail=1
+npx vitest run packages/app/src/stores/session-store-hooks.test.ts --bail=1
+npx vitest run packages/app/src/hooks/use-sidebar-workspaces-list.test.ts --bail=1
+npx vitest run packages/app/src/components/sidebar-workspace-list.test.tsx --bail=1
 npx vitest run packages/app/src/utils/workspace-archive-navigation.test.ts --bail=1
 npx vitest run packages/app/src/utils/sidebar-workspace-directory.test.ts --bail=1
 npx playwright test packages/app/e2e/workspace-subdirectory-cwd.spec.ts

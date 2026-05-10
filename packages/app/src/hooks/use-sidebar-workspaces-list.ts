@@ -39,7 +39,9 @@ export interface SidebarProjectEntry {
   projectKey: string;
   projectName: string;
   projectKind: WorkspaceDescriptor["projectKind"];
+  projectRootPath: string;
   iconWorkingDir: string;
+  creationWorkingDir: string;
   workspaces: SidebarWorkspaceEntry[];
 }
 
@@ -61,7 +63,7 @@ function createStructuralWorkspaceEntry(input: {
     serverId: input.serverId,
     workspaceId: input.workspaceId,
     projectKey: input.project.projectKey,
-    projectRootPath: input.project.iconWorkingDir,
+    projectRootPath: input.project.projectRootPath,
     workspaceDirectory: undefined,
     projectKind: input.project.projectKind,
     workspaceKind: "checkout",
@@ -108,7 +110,9 @@ export function buildSidebarProjectsFromStructure(input: {
     projectKey: project.projectKey,
     projectName: project.projectName,
     projectKind: project.projectKind,
+    projectRootPath: project.projectRootPath,
     iconWorkingDir: project.iconWorkingDir,
+    creationWorkingDir: project.creationWorkingDir,
     workspaces: project.workspaceKeys.map((workspaceId) =>
       createStructuralWorkspaceEntry({
         serverId: input.serverId,

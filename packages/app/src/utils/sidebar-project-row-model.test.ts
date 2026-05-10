@@ -32,7 +32,9 @@ function project(overrides: Partial<SidebarProjectEntry> = {}): SidebarProjectEn
     projectKey: "project-1",
     projectName: "paseo",
     projectKind: "git",
+    projectRootPath: "/repo",
     iconWorkingDir: "/repo",
+    creationWorkingDir: "/repo",
     workspaces: [workspace()],
     ...overrides,
   };

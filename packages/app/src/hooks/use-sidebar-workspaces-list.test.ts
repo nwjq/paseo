@@ -34,14 +34,19 @@ function project(input: {
   projectKey: string;
   projectName?: string;
   projectKind?: WorkspaceStructureProject["projectKind"];
+  projectRootPath?: string;
   iconWorkingDir?: string;
+  creationWorkingDir?: string;
   workspaceKeys: string[];
 }): WorkspaceStructureProject {
   return {
     projectKey: input.projectKey,
     projectName: input.projectName ?? input.projectKey,
     projectKind: input.projectKind ?? "git",
+    projectRootPath: input.projectRootPath ?? input.iconWorkingDir ?? input.projectKey,
     iconWorkingDir: input.iconWorkingDir ?? input.projectKey,
+    creationWorkingDir:
+      input.creationWorkingDir ?? input.projectRootPath ?? input.iconWorkingDir ?? input.projectKey,
     workspaceKeys: input.workspaceKeys,
   };
 }
@@ -168,6 +173,7 @@ describe("buildSidebarProjectsFromStructure", () => {
 
     expect(projects).toHaveLength(1);
     expect(projects[0]?.projectName).toBe("Project 1");
+    expect(projects[0]?.creationWorkingDir).toBe("/repo/main");
     expect(projects[0]?.workspaces[0]).toMatchObject({
       workspaceKey: "srv:ws-main",
       serverId: "srv",
@@ -175,6 +181,27 @@ describe("buildSidebarProjectsFromStructure", () => {
       projectRootPath: "/repo/main",
       projectKind: "git",
     });
+  });
+
+  it("keeps project root and creation working dir separate", () => {
+    const projects = buildSidebarProjectsFromStructure({
+      serverId: "srv",
+      projects: [
+        project({
+          projectKey: "project-1",
+          projectRootPath: "/repo/main",
+          iconWorkingDir: "/repo/main",
+          creationWorkingDir: "/repo/main/packages/app",
+          workspaceKeys: ["ws-main"],
+        }),
+      ],
+    });
+
+    expect(projects[0]).toMatchObject({
+      projectRootPath: "/repo/main",
+      creationWorkingDir: "/repo/main/packages/app",
+    });
+    expect(projects[0]?.workspaces[0]?.projectRootPath).toBe("/repo/main");
   });
 
   it("preserves the structure hook project order", () => {
