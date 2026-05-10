@@ -5268,6 +5268,7 @@ export class Session {
         paseoHome: this.paseoHome,
         github: this.github,
         workspaceGitService: this.workspaceGitService,
+        workspaceRegistry: this.workspaceRegistry,
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),

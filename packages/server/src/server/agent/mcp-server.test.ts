@@ -1094,6 +1094,7 @@ describe("create_agent MCP tool", () => {
       const workspaceGitService = {
         getSnapshot: vi.fn(async () => null),
       };
+      const workspaceRecords: PersistedWorkspaceRecord[] = [];
       const archiveWorkspaceRecord = vi.fn(async () => undefined);
       const emitWorkspaceUpdatesForWorkspaceIds = vi.fn(async () => undefined);
       const markWorkspaceArchiving = vi.fn();
@@ -1108,6 +1109,9 @@ describe("create_agent MCP tool", () => {
           WorkspaceGitService,
           "getSnapshot" | "listWorktrees"
         >,
+        workspaceRegistry: {
+          list: vi.fn(async () => workspaceRecords),
+        },
         archiveWorkspaceRecord,
         emitWorkspaceUpdatesForWorkspaceIds,
         markWorkspaceArchiving,
@@ -1121,6 +1125,16 @@ describe("create_agent MCP tool", () => {
       const created = await createTool.handler({
         cwd: repoDir,
         target: { mode: "branch-off", newBranch: "archive-tool-worktree", base: "main" },
+      });
+      workspaceRecords.push({
+        workspaceId: created.structuredContent.worktreePath,
+        projectId: repoDir,
+        cwd: created.structuredContent.worktreePath,
+        kind: "worktree",
+        displayName: "archive-tool-worktree",
+        createdAt: "2026-04-30T00:00:00.000Z",
+        updatedAt: "2026-04-30T00:00:00.000Z",
+        archivedAt: null,
       });
       workspaceGitService.getSnapshot.mockClear();
 

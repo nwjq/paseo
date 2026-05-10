@@ -29,7 +29,7 @@ export interface CreateWorktreeCoreInput {
 
 export interface CreateWorktreeCoreDeps {
   github: GitHubService;
-  workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot" | "resolveDefaultBranch">;
+  workspaceGitService?: Pick<WorkspaceGitService, "getSnapshot" | "resolveDefaultBranch">;
   resolveDefaultBranch?: (repoRoot: string) => Promise<string>;
 }
 
@@ -37,6 +37,7 @@ export interface CreateWorktreeCoreResult {
   worktree: WorktreeConfig;
   intent: WorktreeCreationIntent;
   repoRoot: string;
+  sourceRepoRoot: string;
   created: boolean;
 }
 
@@ -44,7 +45,7 @@ export async function createWorktreeCore(
   input: CreateWorktreeCoreInput,
   deps: CreateWorktreeCoreDeps,
 ): Promise<CreateWorktreeCoreResult> {
-  const repoRoot = await resolveWorktreeRepoRoot(input, deps.workspaceGitService);
+  const { repoRoot, sourceRepoRoot } = await resolveWorktreeRoots(input, deps.workspaceGitService);
   const requestedWorktreeSlug = input.worktreeSlug
     ? normalizeWorktreeSlug(input.worktreeSlug)
     : undefined;
@@ -100,7 +101,7 @@ export async function createWorktreeCore(
     paseoHome: input.paseoHome,
   });
   if (existingWorktree) {
-    return { worktree: existingWorktree, intent, repoRoot, created: false };
+    return { worktree: existingWorktree, intent, repoRoot, sourceRepoRoot, created: false };
   }
 
   return {
@@ -113,6 +114,7 @@ export async function createWorktreeCore(
     }),
     intent,
     repoRoot,
+    sourceRepoRoot,
     created: true,
   };
 }
@@ -130,15 +132,26 @@ async function resolveDefaultBranch(
   return baseBranch;
 }
 
-export async function resolveWorktreeRepoRoot(
+export async function resolveWorktreeRoots(
   input: Pick<CreateWorktreeCoreInput, "cwd" | "paseoHome">,
-  workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">,
-): Promise<string> {
+  workspaceGitService?: Pick<WorkspaceGitService, "getSnapshot">,
+): Promise<{ repoRoot: string; sourceRepoRoot: string }> {
   if (!workspaceGitService) {
     throw new Error("Create worktree requires WorkspaceGitService");
   }
 
-  return workspaceGitService.resolveRepoRoot(input.cwd);
+  const snapshot = await workspaceGitService.getSnapshot(input.cwd);
+  if (!snapshot.git.isGit) {
+    throw new Error("Create worktree requires a git repository");
+  }
+
+  const fallbackCwd = input.cwd;
+  return {
+    repoRoot: snapshot.git.isPaseoOwnedWorktree
+      ? (snapshot.git.mainRepoRoot ?? snapshot.git.repoRoot ?? fallbackCwd)
+      : (snapshot.git.repoRoot ?? fallbackCwd),
+    sourceRepoRoot: snapshot.git.repoRoot ?? fallbackCwd,
+  };
 }
 
 function validateWorktreeSlug(slug: string): string {

@@ -10,7 +10,7 @@ import {
   openProjectViaDaemon,
 } from "./helpers/new-workspace";
 import { createTempGitRepo } from "./helpers/workspace";
-import { waitForSidebarHydration } from "./helpers/workspace-ui";
+import { switchWorkspaceViaSidebar, waitForSidebarHydration } from "./helpers/workspace-ui";
 
 const SIDEBAR_WORKSPACE_ROW_PREFIX = "sidebar-workspace-row-";
 
@@ -126,6 +126,33 @@ test.describe("Workspace subdirectory cwd", () => {
 
       const normalizedCreatedWorkspacePath = normalizePathForCompare(createdWorkspaceId);
       expect(path.posix.basename(normalizedCreatedWorkspacePath)).toBe(subdirectoryName);
+
+      await switchWorkspaceViaSidebar({
+        page,
+        serverId,
+        targetWorkspacePath: createdWorkspaceId,
+      });
+
+      await clickNewWorkspaceButton(page, {
+        projectKey: opened.projectKey,
+        projectDisplayName: opened.projectDisplayName,
+        prompt: `subdir-worktree-second-hop-${Date.now()}`,
+      });
+
+      const secondWorkspaceId = await waitForNewWorkspaceId({
+        page,
+        serverId,
+        previousWorkspaceId: createdWorkspaceId,
+      });
+      worktreeWorkspaceIds.add(secondWorkspaceId);
+
+      const secondRow = workspaceRowLocator(page, serverId, secondWorkspaceId);
+      await expect(secondRow).toBeVisible({ timeout: 30_000 });
+      await expect(secondRow).toContainText("cwd:");
+      await expect(secondRow).toContainText(subdirectoryName);
+
+      const normalizedSecondWorkspacePath = normalizePathForCompare(secondWorkspaceId);
+      expect(path.posix.basename(normalizedSecondWorkspacePath)).toBe(subdirectoryName);
 
       await createdRow.hover();
       const createdRowTestId = await createdRow.getAttribute("data-testid");

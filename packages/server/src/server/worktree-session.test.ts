@@ -480,6 +480,9 @@ function createAgentStorageStub(): Pick<AgentStorage, "list" | "remove"> {
 
 function createWorkspaceArchivingDeps() {
   return {
+    workspaceRegistry: {
+      list: vi.fn(async () => []),
+    },
     emitWorkspaceUpdatesForWorkspaceIds: vi.fn(async () => {}),
     markWorkspaceArchiving: vi.fn(),
     clearWorkspaceArchiving: vi.fn(),
@@ -1877,6 +1880,82 @@ describe("archivePaseoWorktree", () => {
     expect(maxEnd - minStart).toBeLessThan(220);
   });
 
+  test("archives a subdirectory workspace record even when no agent cwd points at it", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    cleanupPaths.push(tempDir);
+
+    const subdirectory = path.join(repoDir, "packages", "app");
+    mkdirSync(subdirectory, { recursive: true });
+    writeFileSync(path.join(subdirectory, "index.ts"), "export const app = true;\n");
+    execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add subdirectory"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+
+    const paseoHome = path.join(tempDir, ".paseo");
+    const created = await createLegacyWorktreeForTest({
+      branchName: "archive-subdir-workspace",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "archive-subdir-workspace",
+      runSetup: false,
+      paseoHome,
+    });
+    const workspaceCwd = path.join(created.worktreePath, "packages", "app");
+    const workspaceRecord: PersistedWorkspaceRecord = {
+      workspaceId: workspaceCwd,
+      projectId: repoDir,
+      cwd: workspaceCwd,
+      kind: "worktree",
+      displayName: "archive-subdir-workspace",
+      createdAt: "2026-04-30T00:00:00.000Z",
+      updatedAt: "2026-04-30T00:00:00.000Z",
+      archivedAt: null,
+    };
+    const archiveWorkspaceRecord = vi.fn(async () => {});
+    const emitWorkspaceUpdatesForWorkspaceIds = vi.fn(async () => {});
+    const markWorkspaceArchiving = vi.fn();
+    const clearWorkspaceArchiving = vi.fn();
+
+    await archivePaseoWorktree(
+      {
+        paseoHome,
+        github: createGitHubServiceStub(),
+        workspaceGitService: { getSnapshot: vi.fn(async () => null) },
+        workspaceRegistry: {
+          list: vi.fn(async () => [workspaceRecord]),
+        },
+        agentManager: {
+          listAgents: () => [],
+          closeAgent: vi.fn(async () => {}),
+        },
+        agentStorage: createAgentStorageStub(),
+        archiveWorkspaceRecord,
+        emit: vi.fn(),
+        emitWorkspaceUpdatesForWorkspaceIds,
+        markWorkspaceArchiving,
+        clearWorkspaceArchiving,
+        isPathWithinRoot: createIsPathWithinRoot(),
+        killTerminalsUnderPath: vi.fn(async () => {}),
+        sessionLogger: createLogger(),
+      },
+      {
+        targetPath: created.worktreePath,
+        repoRoot: repoDir,
+        requestId: "req-archive-subdir-workspace",
+      },
+    );
+
+    expect(existsSync(created.worktreePath)).toBe(false);
+    expect(archiveWorkspaceRecord).toHaveBeenCalledWith(workspaceCwd);
+    expect(Array.from(markWorkspaceArchiving.mock.calls[0]?.[0] ?? [])).toEqual([workspaceCwd]);
+    expect(Array.from(emitWorkspaceUpdatesForWorkspaceIds.mock.calls[0]?.[0] ?? [])).toEqual([
+      workspaceCwd,
+    ]);
+    expect(Array.from(clearWorkspaceArchiving.mock.calls[0]?.[0] ?? [])).toEqual([workspaceCwd]);
+  });
+
   test("emits archiving upserts during worktree archive request until final remove", async () => {
     const { tempDir, repoDir } = createGitRepo();
     cleanupPaths.push(tempDir);
@@ -1947,6 +2026,9 @@ describe("archivePaseoWorktree", () => {
         workspaceGitService: {
           getSnapshot: vi.fn(async () => null),
           listWorktrees: vi.fn(async () => []),
+        },
+        workspaceRegistry: {
+          list: vi.fn(async () => [workspaceRecord]),
         },
         agentManager: {
           listAgents: () => [liveAgent],

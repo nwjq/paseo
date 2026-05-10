@@ -23,7 +23,7 @@ afterEach(() => {
   }
 });
 
-test("creates a worktree and registers it in the source workspace project without git snapshot lookup", async () => {
+test("creates a worktree and registers it in the source workspace project without extra git snapshot lookup", async () => {
   const { repoDir, tempDir } = createGitRepo();
   cleanupPaths.push(tempDir);
   const events: string[] = [];
@@ -59,7 +59,7 @@ test("creates a worktree and registers it in the source workspace project withou
   expect(result.workspace.kind).toBe("worktree");
   expect(result.workspace.projectId).toBe("remote:github.com/acme/repo");
   expect(result.workspace.displayName).toBe("feature-one");
-  expect(deps.workspaceGitService.getSnapshot).not.toHaveBeenCalled();
+  expect(deps.workspaceGitService.getSnapshot).toHaveBeenCalledTimes(1);
   expect(events).toEqual([
     "project:remote:github.com/acme/repo",
     `workspace:${result.workspace.workspaceId}`,
@@ -88,6 +88,42 @@ test("maps subdirectory inputs onto the same subdirectory inside the worktree", 
   const expectedWorkspaceDirectory = path.join(result.worktree.worktreePath, "packages", "app");
   expect(result.workspace.cwd).toBe(expectedWorkspaceDirectory);
   expect(result.workspace.workspaceId).toBe(expectedWorkspaceDirectory);
+});
+
+test("preserves subdirectory mapping when creating from an existing paseo worktree subdirectory", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const subdirectory = path.join(repoDir, "fitnexa2");
+  mkdirSync(subdirectory, { recursive: true });
+  writeFileSync(path.join(subdirectory, "README.md"), "# Fitnexa2\n");
+  execFileSync("git", ["add", "fitnexa2/README.md"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "add fitnexa2"], { cwd: repoDir, stdio: "pipe" });
+
+  const paseoHome = path.join(tempDir, ".paseo");
+  const first = await createPaseoWorktree(
+    {
+      cwd: subdirectory,
+      worktreeSlug: "first-hop",
+      runSetup: false,
+      paseoHome,
+    },
+    createDeps(),
+  );
+
+  const second = await createPaseoWorktree(
+    {
+      cwd: first.workspace.cwd,
+      worktreeSlug: "second-hop",
+      runSetup: false,
+      paseoHome,
+    },
+    createDeps(),
+  );
+
+  const expectedWorkspaceDirectory = path.join(second.worktree.worktreePath, "fitnexa2");
+  expect(first.workspace.cwd).toBe(path.join(first.worktree.worktreePath, "fitnexa2"));
+  expect(second.workspace.cwd).toBe(expectedWorkspaceDirectory);
+  expect(second.workspace.workspaceId).toBe(expectedWorkspaceDirectory);
 });
 
 // POSIX-only: Windows git worktree paths need separate canonicalization coverage.
@@ -571,8 +607,8 @@ function createWorkspaceGitServiceStub(): WorkspaceGitService {
     registerWorkspace: () => ({
       unsubscribe: () => {},
     }),
-    peekSnapshot: (cwd) => createWorkspaceGitSnapshot(cwd),
-    getSnapshot: async (cwd) => createWorkspaceGitSnapshot(cwd),
+    peekSnapshot: (cwd) => createWorkspaceGitSnapshotOrNoGit(cwd),
+    getSnapshot: async (cwd) => createWorkspaceGitSnapshotOrNoGit(cwd),
     resolveRepoRoot: async (cwd) => {
       try {
         return createWorkspaceGitSnapshot(cwd).git.repoRoot ?? cwd;
@@ -589,6 +625,36 @@ function createWorkspaceGitServiceStub(): WorkspaceGitService {
     scheduleRefreshForCwd: () => {},
     dispose: () => {},
   };
+}
+
+function createWorkspaceGitSnapshotOrNoGit(cwd: string): WorkspaceGitRuntimeSnapshot {
+  try {
+    return createWorkspaceGitSnapshot(cwd);
+  } catch {
+    return {
+      cwd,
+      git: {
+        isGit: false,
+        repoRoot: null,
+        mainRepoRoot: null,
+        currentBranch: null,
+        remoteUrl: null,
+        isPaseoOwnedWorktree: false,
+        isDirty: null,
+        baseRef: null,
+        aheadBehind: null,
+        aheadOfOrigin: null,
+        behindOfOrigin: null,
+        hasRemote: false,
+        diffStat: null,
+      },
+      github: {
+        featuresEnabled: false,
+        pullRequest: null,
+        error: null,
+      },
+    };
+  }
 }
 
 function createWorkspaceGitSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot {

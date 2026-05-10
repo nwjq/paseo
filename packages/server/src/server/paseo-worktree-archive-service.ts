@@ -3,6 +3,7 @@ import type { Logger } from "pino";
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { SessionOutboundMessage } from "./messages.js";
+import type { WorkspaceRegistry } from "./workspace-registry.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import { normalizeWorkspaceId as normalizePersistedWorkspaceId } from "./workspace-registry-model.js";
 import type { GitHubService } from "../services/github-service.js";
@@ -15,6 +16,7 @@ export interface ArchivePaseoWorktreeDependencies {
   paseoHome?: string;
   github: GitHubService;
   workspaceGitService: Pick<WorkspaceGitService, "getSnapshot">;
+  workspaceRegistry: Pick<WorkspaceRegistry, "list">;
   agentManager: Pick<AgentManager, "listAgents" | "closeAgent">;
   agentStorage: Pick<AgentStorage, "list" | "remove">;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
@@ -54,7 +56,23 @@ export async function archivePaseoWorktree(
 
   const removedAgents = new Set<string>();
   const affectedWorkspaceCwds = new Set<string>([targetPath]);
-  const affectedWorkspaceIds = new Set<string>([normalizePersistedWorkspaceId(targetPath)]);
+  const affectedWorkspaceIds = new Set<string>();
+
+  try {
+    const matchingWorkspaces = (await dependencies.workspaceRegistry.list()).filter(
+      (workspace) =>
+        !workspace.archivedAt && dependencies.isPathWithinRoot(targetPath, workspace.cwd),
+    );
+    for (const workspace of matchingWorkspaces) {
+      affectedWorkspaceCwds.add(workspace.cwd);
+      affectedWorkspaceIds.add(normalizePersistedWorkspaceId(workspace.workspaceId));
+    }
+  } catch (error) {
+    dependencies.sessionLogger?.warn(
+      { err: error, targetPath },
+      "Failed to list persisted workspaces during worktree archive; continuing",
+    );
+  }
 
   const liveAgents = dependencies.agentManager
     .listAgents()
@@ -87,6 +105,10 @@ export async function archivePaseoWorktree(
     ...liveAgents.map((agent) => agent.id),
     ...matchingStoredRecords.map((record) => record.id),
   ]);
+
+  if (affectedWorkspaceIds.size === 0) {
+    affectedWorkspaceIds.add(normalizePersistedWorkspaceId(targetPath));
+  }
 
   const affectedWorkspaceIdList = Array.from(affectedWorkspaceIds);
   dependencies.markWorkspaceArchiving(affectedWorkspaceIdList, new Date().toISOString());

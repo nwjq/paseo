@@ -67,6 +67,7 @@ import {
 import { sendPromptToAgent, setupFinishNotification, startAgentRun } from "./agent-prompt.js";
 import type { GitHubService } from "../../services/github-service.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
+import type { WorkspaceRegistry } from "../workspace-registry.js";
 import type { CreatePaseoWorktreeInput } from "../paseo-worktree-service.js";
 import { toWorktreeRequestError } from "../worktree-errors.js";
 import { join } from "node:path";
@@ -83,6 +84,7 @@ export interface AgentMcpServerOptions {
     WorkspaceGitService,
     "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
   >;
+  workspaceRegistry?: Pick<WorkspaceRegistry, "list">;
   archiveWorkspaceRecord?: ArchivePaseoWorktreeDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchivePaseoWorktreeDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
   markWorkspaceArchiving?: ArchivePaseoWorktreeDependencies["markWorkspaceArchiving"];
@@ -1900,6 +1902,9 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       if (!options.archiveWorkspaceRecord) {
         throw new Error("Workspace registry archiver is required to archive worktrees");
       }
+      if (!options.workspaceRegistry) {
+        throw new Error("Workspace registry listing is required to archive worktrees");
+      }
       if (!options.emitWorkspaceUpdatesForWorkspaceIds) {
         throw new Error("Workspace update emitter is required to archive worktrees");
       }
@@ -1922,6 +1927,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
           paseoHome: options.paseoHome,
           github: options.github,
           workspaceGitService: options.workspaceGitService,
+          workspaceRegistry: options.workspaceRegistry,
           agentManager,
           agentStorage,
           archiveWorkspaceRecord: options.archiveWorkspaceRecord,

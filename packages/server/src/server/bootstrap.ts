@@ -611,6 +611,7 @@ export async function createPaseoDaemon(
         providerRegistry,
         github,
         workspaceGitService,
+        workspaceRegistry,
         archiveWorkspaceRecord: archiveWorkspaceRecordForMcp,
         emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesForMcpArchive,
         markWorkspaceArchiving: markWorkspaceArchivingForMcpArchive,

@@ -63,6 +63,7 @@ export async function createPaseoWorktree(
   const workspace = await upsertWorkspaceForWorktree({
     inputCwd: input.cwd,
     repoRoot: createdWorktree.repoRoot,
+    sourceRepoRoot: createdWorktree.sourceRepoRoot,
     worktree: createdWorktree.worktree,
     deps,
   });
@@ -234,12 +235,13 @@ function resolveWorktreeWorkspaceDirectory(options: {
 async function upsertWorkspaceForWorktree(options: {
   inputCwd: string;
   repoRoot: string;
+  sourceRepoRoot: string;
   worktree: WorktreeConfig;
   deps: Pick<CreatePaseoWorktreeDeps, "projectRegistry" | "workspaceRegistry">;
 }): Promise<PersistedWorkspaceRecord> {
   const normalizedCwd = resolveWorktreeWorkspaceDirectory({
     inputCwd: options.inputCwd,
-    repoRoot: options.repoRoot,
+    repoRoot: options.sourceRepoRoot,
     worktreePath: options.worktree.worktreePath,
   });
   const normalizedInputCwd = normalizeWorkspaceId(options.inputCwd);
