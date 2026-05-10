@@ -293,10 +293,10 @@ test("S3: re-open active workspace by exact path returns the same record", async
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// S4. Open a subdir of an active git workspace: canonicalizes UP to the repo
-//     root, returns the existing workspace. (Per "always go to the nearest git".)
+// S4. Open a subdir of an active git workspace: keeps the exact cwd and creates
+//     a distinct workspace in the same git project.
 // ─────────────────────────────────────────────────────────────────────────────
-test("S4: open subdir of active git workspace returns the repo-root workspace", async () => {
+test("S4: open subdir of active git workspace creates a distinct workspace at that subdir", async () => {
   const h = createHarness({
     workspaces: [gitWorkspace(FOO)],
     projects: [gitProject(FOO)],
@@ -304,8 +304,11 @@ test("S4: open subdir of active git workspace returns the repo-root workspace", 
   });
   await openProject(h.session, FOO_SUB);
   const resp = getOpenResponse(h.emitted, "req-1");
-  expect(resp?.workspace?.id).toBe(FOO);
-  expect(h.workspaces.size).toBe(1);
+  expect(resp?.workspace?.workspaceDirectory).toBe(FOO_SUB);
+  expect(resp?.workspace?.workspaceKind).toBe("local_checkout");
+  expect(h.workspaces.has(FOO)).toBe(true);
+  expect(h.workspaces.has(FOO_SUB)).toBe(true);
+  expect(h.workspaces.size).toBe(2);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

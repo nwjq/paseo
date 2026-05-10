@@ -2762,7 +2762,7 @@ describe("session stash mutation handling", () => {
 });
 
 describe("session paseo worktree creation handling", () => {
-  test("forces workspace git refreshes for the source repo and created worktree", async () => {
+  test("forces workspace git refreshes for the source repo and created workspace cwd", async () => {
     const workspaceGitService = { getSnapshot: vi.fn().mockResolvedValue({}) };
     const session = createSessionForTest({ workspaceGitService });
     paseoWorktreeServiceMocks.createPaseoWorktree.mockResolvedValue({
@@ -2774,7 +2774,7 @@ describe("session paseo worktree creation handling", () => {
       workspace: {
         workspaceId: "workspace-new-worktree",
         projectId: "project-repo",
-        cwd: "/tmp/paseo/worktrees/new-worktree",
+        cwd: "/tmp/paseo/worktrees/new-worktree/packages/app",
         kind: "worktree",
         displayName: "feature/new-worktree",
       },
@@ -2792,7 +2792,7 @@ describe("session paseo worktree creation handling", () => {
       reason: "create-worktree",
     });
     expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith(
-      "/tmp/paseo/worktrees/new-worktree",
+      "/tmp/paseo/worktrees/new-worktree/packages/app",
       {
         force: true,
         reason: "create-worktree",

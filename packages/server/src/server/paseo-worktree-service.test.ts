@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -64,6 +64,30 @@ test("creates a worktree and registers it in the source workspace project withou
     "project:remote:github.com/acme/repo",
     `workspace:${result.workspace.workspaceId}`,
   ]);
+});
+
+test("maps subdirectory inputs onto the same subdirectory inside the worktree", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const subdirectory = path.join(repoDir, "packages", "app");
+  mkdirSync(subdirectory, { recursive: true });
+  writeFileSync(path.join(subdirectory, "index.ts"), "export const app = true;\n");
+  execFileSync("git", ["add", "packages/app/index.ts"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "add packages/app"], { cwd: repoDir, stdio: "pipe" });
+
+  const result = await createPaseoWorktree(
+    {
+      cwd: subdirectory,
+      worktreeSlug: "feature-subdir",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    createDeps(),
+  );
+
+  const expectedWorkspaceDirectory = path.join(result.worktree.worktreePath, "packages", "app");
+  expect(result.workspace.cwd).toBe(expectedWorkspaceDirectory);
+  expect(result.workspace.workspaceId).toBe(expectedWorkspaceDirectory);
 });
 
 // POSIX-only: Windows git worktree paths need separate canonicalization coverage.

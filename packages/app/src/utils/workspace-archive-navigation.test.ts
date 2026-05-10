@@ -87,6 +87,26 @@ describe("buildWorkspaceArchiveRedirectRoute", () => {
       }),
     ).toBe("/h/server-1/new?dir=%2Fnotes&name=Project");
   });
+
+  it("prefers the archived workspace directory when it is a subdirectory", () => {
+    const workspaces = [
+      workspace({
+        id: "/repo/.paseo/worktrees/feature/packages/app",
+        projectRootPath: "/repo",
+        workspaceDirectory: "/repo/.paseo/worktrees/feature/packages/app",
+      }),
+    ];
+
+    expect(
+      buildWorkspaceArchiveRedirectRoute({
+        serverId: "server-1",
+        archivedWorkspaceId: "/repo/.paseo/worktrees/feature/packages/app",
+        workspaces,
+      }),
+    ).toBe(
+      "/h/server-1/new?dir=%2Frepo%2F.paseo%2Fworktrees%2Ffeature%2Fpackages%2Fapp&name=Project",
+    );
+  });
 });
 
 describe("redirectIfArchivingActiveWorkspace", () => {

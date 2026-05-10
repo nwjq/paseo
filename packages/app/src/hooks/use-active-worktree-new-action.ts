@@ -6,6 +6,7 @@ import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspac
 import { useSessionStore } from "@/stores/session-store";
 import { buildHostNewWorkspaceRoute } from "@/utils/host-routes";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
+import { resolveProjectCreationDirectory } from "@/utils/sidebar-workspace-directory";
 
 const WORKTREE_NEW_ACTIONS: readonly KeyboardActionId[] = ["worktree.new"];
 
@@ -22,7 +23,10 @@ export function useActiveWorktreeNewAction() {
     if (!workspace || workspace.projectKind !== "git") {
       return null;
     }
-    return workspace.projectRootPath;
+    return resolveProjectCreationDirectory({
+      projectIconWorkingDir: workspace.projectRootPath,
+      workspaceDirectory: workspace.workspaceDirectory,
+    });
   });
 
   const displayName = useSessionStore((state) => {

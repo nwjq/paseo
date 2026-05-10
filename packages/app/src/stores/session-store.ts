@@ -135,7 +135,7 @@ export function normalizeWorkspaceDescriptor(
     projectId: payload.projectId,
     projectDisplayName: payload.projectDisplayName,
     projectRootPath: payload.projectRootPath,
-    workspaceDirectory: payload.workspaceDirectory,
+    workspaceDirectory: payload.workspaceDirectory || payload.id,
     projectKind: payload.projectKind,
     workspaceKind: payload.workspaceKind,
     name: payload.name,

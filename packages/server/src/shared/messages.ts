@@ -2246,7 +2246,7 @@ export const WorkspaceDescriptorPayloadSchema = z
   })
   .transform((workspace) => ({
     ...workspace,
-    workspaceDirectory: workspace.workspaceDirectory ?? workspace.projectRootPath,
+    workspaceDirectory: workspace.workspaceDirectory ?? workspace.id,
   }));
 
 export const AgentUpdateMessageSchema = z.object({

@@ -32,9 +32,8 @@ export function normalizeWorkspaceId(cwd: string): string {
   return resolve(trimmed);
 }
 
-export function deriveWorkspaceId(cwd: string, checkout: ProjectCheckoutLitePayload): string {
-  const worktreeRoot = checkout.worktreeRoot ? parseGitRevParsePath(checkout.worktreeRoot) : null;
-  return worktreeRoot ?? normalizeWorkspaceId(cwd);
+export function deriveWorkspaceId(cwd: string, _checkout: ProjectCheckoutLitePayload): string {
+  return normalizeWorkspaceId(cwd);
 }
 
 function deriveRemoteProjectKey(remoteUrl: string | null): string | null {
@@ -142,6 +141,12 @@ export function deriveProjectRootPath(input: {
 }): string {
   if (input.checkout.isGit && input.checkout.mainRepoRoot) {
     return input.checkout.mainRepoRoot;
+  }
+  if (input.checkout.isGit && input.checkout.worktreeRoot) {
+    const parsedWorktreeRoot = parseGitRevParsePath(input.checkout.worktreeRoot);
+    if (parsedWorktreeRoot) {
+      return normalizeWorkspaceId(parsedWorktreeRoot);
+    }
   }
   return input.cwd;
 }

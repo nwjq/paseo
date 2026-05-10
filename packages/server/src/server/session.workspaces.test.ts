@@ -2804,10 +2804,137 @@ test("open_project_request emits a workspace_update with githubRuntime once the 
   );
 });
 
+test("open_project_request keeps child workspace directory after git snapshot updates", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests();
+  const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
+  const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
+  const repoRoot = path.resolve("/tmp/repo-main");
+  const cwd = path.join(repoRoot, "packages", "app");
+  const snapshot = createWorkspaceRuntimeSnapshot(cwd, {
+    git: {
+      isGit: true,
+      repoRoot,
+      currentBranch: "main",
+      remoteUrl: "https://github.com/acme/repo.git",
+      isPaseoOwnedWorktree: false,
+      mainRepoRoot: null,
+    },
+  });
+
+  let listener: ((snapshot: WorkspaceGitRuntimeSnapshot) => void) | null = null;
+  const peeked = { value: null as WorkspaceGitRuntimeSnapshot | null };
+
+  projects.set(
+    repoRoot,
+    createPersistedProjectRecord({
+      projectId: repoRoot,
+      rootPath: repoRoot,
+      kind: "git",
+      displayName: "repo",
+      createdAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    }),
+  );
+  workspaces.set(
+    repoRoot,
+    createPersistedWorkspaceRecord({
+      workspaceId: repoRoot,
+      projectId: repoRoot,
+      cwd: repoRoot,
+      kind: "local_checkout",
+      displayName: "main",
+      createdAt: "2026-03-01T12:00:00.000Z",
+      updatedAt: "2026-03-01T12:00:00.000Z",
+    }),
+  );
+
+  session.emit = (message) => {
+    if (isSessionOutboundMessage(message)) emitted.push(message);
+  };
+  session.projectRegistry.get = async (projectId: string) => projects.get(projectId) ?? null;
+  session.projectRegistry.upsert = async (
+    record: ReturnType<typeof createPersistedProjectRecord>,
+  ) => {
+    projects.set(record.projectId, record);
+  };
+  session.workspaceRegistry.get = async (workspaceId: string) =>
+    workspaces.get(workspaceId) ?? null;
+  session.workspaceRegistry.upsert = async (
+    record: ReturnType<typeof createPersistedWorkspaceRecord>,
+  ) => {
+    workspaces.set(record.workspaceId, record);
+  };
+  session.projectRegistry.list = async () => Array.from(projects.values());
+  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.workspaceGitService.getCheckout = async (requestedCwd: string) => ({
+    cwd: requestedCwd,
+    isGit: true,
+    currentBranch: "main",
+    remoteUrl: "https://github.com/acme/repo.git",
+    worktreeRoot: repoRoot,
+    isPaseoOwnedWorktree: false,
+    mainRepoRoot: null,
+  });
+  session.workspaceGitService.peekSnapshot = () => peeked.value;
+  session.workspaceGitService.registerWorkspace = (
+    _params,
+    incomingListener: (snapshot: WorkspaceGitRuntimeSnapshot) => void,
+  ) => {
+    listener = incomingListener;
+    return { unsubscribe: () => {} };
+  };
+  session.workspaceGitService.getSnapshot = async () => {
+    peeked.value = snapshot;
+    listener?.(snapshot);
+    return snapshot;
+  };
+  session.workspaceUpdatesSubscription = {
+    subscriptionId: "sub-open-project-child",
+    filter: undefined,
+    isBootstrapping: false,
+    pendingUpdatesByWorkspaceId: new Map(),
+    lastEmittedByWorkspaceId: new Map(),
+  };
+  session.reconcileActiveWorkspaceRecords = async () => new Set();
+
+  await session.handleMessage({
+    type: "open_project_request",
+    cwd,
+    requestId: "req-open-child-runtime-update",
+  });
+
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  const response = emitted.find(
+    (message) =>
+      message.type === "open_project_response" &&
+      message.payload.requestId === "req-open-child-runtime-update",
+  );
+  expect(response?.type).toBe("open_project_response");
+  if (!response || response.type !== "open_project_response") {
+    throw new Error("Expected open_project_response");
+  }
+  expect(response.payload.workspace?.id).toBe(cwd);
+  expect(response.payload.workspace?.workspaceDirectory).toBe(cwd);
+
+  const updates = filterByType(emitted, "workspace_update")
+    .map((message) => message.payload)
+    .filter(
+      (payload): payload is WorkspaceUpsertPayload =>
+        payload.kind === "upsert" && payload.workspace.id === cwd,
+    );
+  expect(updates.length).toBeGreaterThan(0);
+  expect(updates.every((payload) => payload.workspace.workspaceDirectory === cwd)).toBe(true);
+  expect(workspaces.has(cwd)).toBe(true);
+});
+
 interface WorkspaceUpsertPayload {
   kind: "upsert";
   workspace: {
     id: string;
+    workspaceDirectory?: string;
     githubRuntime?: {
       pullRequest?: { url?: string } | null;
     } | null;
@@ -3317,7 +3444,7 @@ test("open_project_request unarchives an existing archived workspace and project
   expect(response?.payload.workspace?.id).toBe(cwd);
 });
 
-test.skip("open_project_request collapses a git subdirectory onto the repo root workspace", async () => {
+test("open_project_request keeps a git subdirectory as its own workspace", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests();
   const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
@@ -3343,18 +3470,14 @@ test.skip("open_project_request collapses a git subdirectory onto the repo root 
   };
   session.projectRegistry.list = async () => Array.from(projects.values());
   session.workspaceRegistry.list = async () => Array.from(workspaces.values());
-  session.buildProjectPlacement = async (cwd: string) => ({
-    projectKey: repoRoot,
-    projectName: "repo",
-    checkout: {
-      cwd,
-      isGit: true,
-      currentBranch: "main",
-      remoteUrl: null,
-      worktreeRoot: repoRoot,
-      isPaseoOwnedWorktree: false,
-      mainRepoRoot: null,
-    },
+  session.workspaceGitService.getCheckout = async (cwd: string) => ({
+    cwd,
+    isGit: true,
+    currentBranch: "main",
+    remoteUrl: null,
+    worktreeRoot: repoRoot,
+    isPaseoOwnedWorktree: false,
+    mainRepoRoot: null,
   });
 
   await session.handleMessage({
@@ -3363,11 +3486,12 @@ test.skip("open_project_request collapses a git subdirectory onto the repo root 
     requestId: "req-open-subdir",
   });
 
-  expect(workspaces.get(repoRoot)).toBeTruthy();
-  expect(workspaces.has(subdir)).toBe(false);
+  expect(workspaces.get(subdir)).toBeTruthy();
+  expect(workspaces.has(repoRoot)).toBe(false);
   const response = findByType(emitted, "open_project_response");
   expect(response?.payload.error).toBeNull();
-  expect(response?.payload.workspace?.id).toBe(repoRoot);
+  expect(response?.payload.workspace?.id).toBe(subdir);
+  expect(response?.payload.workspace?.workspaceDirectory).toBe(subdir);
 });
 
 test("list_available_editors_request returns available targets", async () => {

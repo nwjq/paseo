@@ -110,6 +110,11 @@ import {
   archiveWorkspaceOptimistically,
   archiveWorkspacesOptimistically,
 } from "@/workspace/workspace-archive";
+import {
+  resolveProjectCreationDirectory,
+  resolveProjectHeaderWorkspaceId,
+  resolveWorkspaceLocationLabel,
+} from "@/utils/sidebar-workspace-directory";
 import { WorkspaceHoverCard } from "@/components/workspace-hover-card";
 import { GitHubIcon } from "@/components/icons/github-icon";
 import { isWeb as platformIsWeb, isNative as platformIsNative } from "@/constants/platform";
@@ -1167,15 +1172,38 @@ function ProjectHeaderRow({
 }: ProjectHeaderRowProps) {
   const [isHovered, setIsHovered] = useState(false);
   const isMobileBreakpoint = useIsCompactFormFactor();
+  const projectCreationDirectory = useMemo(
+    () =>
+      resolveProjectCreationDirectory({
+        projectIconWorkingDir: project.iconWorkingDir,
+        workspaceDirectory: workspace?.workspaceDirectory,
+      }),
+    [project.iconWorkingDir, workspace?.workspaceDirectory],
+  );
+  const projectWorkspaceLocationLabel = useMemo(
+    () =>
+      workspace
+        ? resolveWorkspaceLocationLabel({
+            projectKind: workspace.projectKind,
+            projectRootPath: workspace.projectRootPath,
+            workspaceDirectory: workspace.workspaceDirectory,
+          })
+        : null,
+    [workspace],
+  );
+  const projectWorkspaceLocationStyle = useMemo(
+    () => [styles.projectWorkspaceHint, isHovered && styles.projectWorkspaceHintHovered],
+    [isHovered],
+  );
   const handleBeginWorkspaceSetup = useCallback(() => {
-    if (!serverId) {
+    if (!serverId || !projectCreationDirectory) {
       return;
     }
     router.navigate(
-      buildHostNewWorkspaceRoute(serverId, project.iconWorkingDir, { displayName }) as Href,
+      buildHostNewWorkspaceRoute(serverId, projectCreationDirectory, { displayName }) as Href,
     );
     onWorkspacePress?.();
-  }, [displayName, onWorkspacePress, project.iconWorkingDir, serverId]);
+  }, [displayName, onWorkspacePress, projectCreationDirectory, serverId]);
   const _mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
   const _toast = useToast();
 
@@ -1222,6 +1250,11 @@ function ProjectHeaderRow({
           <Text style={styles.projectTitle} numberOfLines={1}>
             {displayName}
           </Text>
+          {projectWorkspaceLocationLabel ? (
+            <Text style={projectWorkspaceLocationStyle} numberOfLines={1}>
+              {projectWorkspaceLocationLabel}
+            </Text>
+          ) : null}
         </View>
       </View>
       <ProjectRowTrailingActions
@@ -1362,6 +1395,19 @@ function WorkspaceRowInner({
     ],
     [isHovered, isCreating],
   );
+  const workspaceLocationHint = useMemo(
+    () =>
+      resolveWorkspaceLocationLabel({
+        projectKind: workspace.projectKind,
+        projectRootPath: workspace.projectRootPath,
+        workspaceDirectory,
+      }),
+    [workspace.projectKind, workspace.projectRootPath, workspaceDirectory],
+  );
+  const workspaceLocationHintStyle = useMemo(
+    () => [styles.workspaceLocationHint, isHovered && styles.workspaceLocationHintHovered],
+    [isHovered],
+  );
   return (
     <WorkspaceHoverCard workspace={workspace} prHint={prHint} isDragging={isDragging}>
       <View
@@ -1413,6 +1459,11 @@ function WorkspaceRowInner({
               onCopyPath={onCopyPath}
             />
           </View>
+          {workspaceLocationHint ? (
+            <Text style={workspaceLocationHintStyle} numberOfLines={1}>
+              {workspaceLocationHint}
+            </Text>
+          ) : null}
           {prHint ? (
             <View style={styles.workspacePrBadgeRow}>
               <PrBadge hint={prHint} />
@@ -2008,10 +2059,13 @@ function ProjectBlock({
     [project.workspaces],
   );
   const activeWorkspaceSelection = useActiveWorkspaceSelection();
-  const isProjectActive =
-    selectionEnabled &&
-    activeWorkspaceSelection?.serverId === serverId &&
-    projectWorkspaceIds.includes(activeWorkspaceSelection.workspaceId);
+  const projectHeaderWorkspaceId = resolveProjectHeaderWorkspaceId({
+    serverId,
+    workspaceIds: projectWorkspaceIds,
+    activeSelection: activeWorkspaceSelection,
+  });
+  const isProjectActive = selectionEnabled && projectHeaderWorkspaceId !== null;
+  const projectHeaderWorkspace = useSidebarWorkspaceEntry(serverId, projectHeaderWorkspaceId);
 
   const renderWorkspaceRow = useCallback(
     (
@@ -2158,7 +2212,7 @@ function ProjectBlock({
             project={project}
             displayName={displayName}
             iconDataUri={iconDataUri}
-            workspace={null}
+            workspace={projectHeaderWorkspace}
             selected={false}
             chevron={rowModel.chevron}
             onPress={handleToggleCollapsed}
@@ -2593,9 +2647,9 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
   },
   projectTitleGroup: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
+    flexDirection: "column",
+    alignItems: "flex-start",
+    justifyContent: "center",
     flex: 1,
     minWidth: 0,
   },
@@ -2631,6 +2685,16 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: "400",
     minWidth: 0,
     flexShrink: 1,
+  },
+  projectWorkspaceHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    lineHeight: 16,
+    minWidth: 0,
+    opacity: 0.92,
+  },
+  projectWorkspaceHintHovered: {
+    color: theme.colors.foreground,
   },
   projectActionButton: {
     flexDirection: "row",
@@ -2805,6 +2869,15 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
     paddingLeft: WORKSPACE_STATUS_DOT_WIDTH + theme.spacing[2],
+  },
+  workspaceLocationHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    lineHeight: 16,
+    paddingLeft: WORKSPACE_STATUS_DOT_WIDTH + theme.spacing[2],
+  },
+  workspaceLocationHintHovered: {
+    color: theme.colors.foreground,
   },
   workspaceCreatingText: {
     color: theme.colors.foregroundMuted,

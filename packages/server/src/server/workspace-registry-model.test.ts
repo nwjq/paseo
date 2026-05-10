@@ -92,7 +92,7 @@ describe("detectStaleWorkspaces", () => {
 });
 
 describe("deriveWorkspaceId", () => {
-  test("uses git worktree root when available", () => {
+  test("keeps the requested cwd for main git checkouts", () => {
     expect(
       deriveWorkspaceId("/tmp/repo/packages/app", {
         cwd: "/tmp/repo/packages/app",
@@ -103,7 +103,21 @@ describe("deriveWorkspaceId", () => {
         isPaseoOwnedWorktree: false,
         mainRepoRoot: null,
       }),
-    ).toBe("/tmp/repo");
+    ).toBe("/tmp/repo/packages/app");
+  });
+
+  test("keeps the requested cwd for linked git worktrees", () => {
+    expect(
+      deriveWorkspaceId("/tmp/repo-feature/src", {
+        cwd: "/tmp/repo-feature/src",
+        isGit: true,
+        currentBranch: "feature/plain",
+        remoteUrl: "https://github.com/acme/repo.git",
+        worktreeRoot: "/tmp/repo-feature",
+        isPaseoOwnedWorktree: false,
+        mainRepoRoot: "/tmp/repo",
+      }),
+    ).toBe("/tmp/repo-feature/src");
   });
 
   test("falls back to normalized cwd when git worktree root contains multiple lines", () => {
@@ -140,6 +154,23 @@ describe("deriveWorkspaceId", () => {
 });
 
 describe("git worktree grouping", () => {
+  test("uses the git repo root as project root for a main checkout opened from a subdirectory", () => {
+    expect(
+      deriveProjectRootPath({
+        cwd: "/tmp/repo/packages/app",
+        checkout: {
+          cwd: "/tmp/repo/packages/app",
+          isGit: true,
+          currentBranch: "main",
+          remoteUrl: "https://github.com/acme/repo.git",
+          worktreeRoot: "/tmp/repo",
+          isPaseoOwnedWorktree: false,
+          mainRepoRoot: null,
+        },
+      }),
+    ).toBe("/tmp/repo");
+  });
+
   test("classifies plain git worktrees for project membership from git facts", () => {
     const membership = classifyDirectoryForProjectMembership({
       cwd: "/tmp/repo-feature",

@@ -235,7 +235,7 @@ export async function buildAgentSessionConfig(
               ),
       },
     );
-    cwd = createdWorktree.worktree.worktreePath;
+    cwd = createdWorktree.workspace.cwd;
     setupContinuation = createdWorktree.setupContinuation;
   } else if (normalized.createNewBranch) {
     const baseBranch =
@@ -597,6 +597,7 @@ export async function createPaseoWorktreeWorkflow(
         requestCwd: input.cwd,
         repoRoot: createdWorktree.repoRoot,
         workspaceId: workspace.workspaceId,
+        workspaceCwd: workspace.cwd,
         worktree: createdWorktree.worktree,
         shouldBootstrap: createdWorktree.created,
         slug,
@@ -652,6 +653,7 @@ export async function runWorktreeSetupInBackground(
     requestCwd: string;
     repoRoot: string;
     workspaceId: string;
+    workspaceCwd: string;
     worktree: WorktreeConfig;
     shouldBootstrap: boolean;
     slug: string;
@@ -748,6 +750,6 @@ export async function runWorktreeSetupInBackground(
       return;
     }
   } finally {
-    await dependencies.emitWorkspaceUpdateForCwd(worktree.worktreePath);
+    await dependencies.emitWorkspaceUpdateForCwd(options.workspaceCwd);
   }
 }

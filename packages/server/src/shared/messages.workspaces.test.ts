@@ -402,7 +402,7 @@ describe("workspace message schemas", () => {
     if (parsed.type !== "workspace_update" || parsed.payload.kind !== "upsert") {
       throw new Error("Expected workspace_update upsert payload");
     }
-    expect(parsed.payload.workspace.workspaceDirectory).toBe("/repo");
+    expect(parsed.payload.workspace.workspaceDirectory).toBe("legacy-workspace");
   });
 
   test("defaults omitted workspace archiving state and preserves present timestamps", () => {

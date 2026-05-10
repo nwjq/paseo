@@ -587,6 +587,7 @@ describe("runWorktreeSetupInBackground", () => {
         requestCwd: repoDir,
         repoRoot: repoDir,
         workspaceId: "42",
+        workspaceCwd: worktreePath,
         worktree: {
           branchName: "feature-no-setup",
           worktreePath,
@@ -686,6 +687,7 @@ describe("runWorktreeSetupInBackground", () => {
         requestCwd: repoDir,
         repoRoot: repoDir,
         workspaceId,
+        workspaceCwd: worktreePath,
         worktree: {
           branchName: "broken-feature",
           worktreePath,
@@ -714,6 +716,53 @@ describe("runWorktreeSetupInBackground", () => {
     });
     expect(archiveWorkspaceRecord).toHaveBeenCalledWith(workspaceId);
     expect(emitWorkspaceUpdateForCwd).toHaveBeenCalledWith(worktreePath);
+  });
+
+  test("emits the final workspace update for a subdirectory workspace cwd", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    cleanupPaths.push(tempDir);
+
+    const paseoHome = path.join(tempDir, ".paseo");
+    const createdWorktree = await createLegacyWorktreeForTest({
+      branchName: "feature-subdir-refresh",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "feature-subdir-refresh",
+      runSetup: false,
+      paseoHome,
+    });
+    const worktreePath = createdWorktree.worktreePath;
+    const workspaceCwd = path.join(worktreePath, "packages", "app");
+    mkdirSync(workspaceCwd, { recursive: true });
+
+    const emitWorkspaceUpdateForCwd = vi.fn(async () => {});
+
+    await runWorktreeSetupInBackground(
+      {
+        paseoHome,
+        emitWorkspaceUpdateForCwd,
+        cacheWorkspaceSetupSnapshot: () => {},
+        emit: () => {},
+        sessionLogger: createLogger(),
+        terminalManager: null,
+        archiveWorkspaceRecord: vi.fn(async () => {}),
+      },
+      {
+        requestCwd: repoDir,
+        repoRoot: repoDir,
+        workspaceId: "ws-subdir-refresh",
+        workspaceCwd,
+        worktree: {
+          branchName: "feature-subdir-refresh",
+          worktreePath,
+        },
+        shouldBootstrap: false,
+        slug: "feature-subdir-refresh",
+        worktreePath,
+      },
+    );
+
+    expect(emitWorkspaceUpdateForCwd).toHaveBeenCalledWith(workspaceCwd);
   });
 
   // POSIX-only: setup command is hardcoded to sh, printf, and sleep.
@@ -760,6 +809,7 @@ describe("runWorktreeSetupInBackground", () => {
           requestCwd: repoDir,
           repoRoot: repoDir,
           workspaceId: "43",
+          workspaceCwd: worktreePath,
           worktree: {
             branchName: "feature-running-setup",
             worktreePath,
@@ -884,6 +934,7 @@ describe("runWorktreeSetupInBackground", () => {
         requestCwd: repoDir,
         repoRoot: repoDir,
         workspaceId: "44",
+        workspaceCwd: existingWorktree.worktreePath,
         worktree: {
           branchName: "reused-worktree",
           worktreePath: existingWorktree.worktreePath,
@@ -979,6 +1030,7 @@ describe("runWorktreeSetupInBackground", () => {
         requestCwd: repoDir,
         repoRoot: repoDir,
         workspaceId: "45",
+        workspaceCwd: worktreePath,
         worktree: {
           branchName: "feature-service-failure",
           worktreePath,
@@ -1061,6 +1113,7 @@ describe("runWorktreeSetupInBackground", () => {
         requestCwd: repoDir,
         repoRoot: repoDir,
         workspaceId: "46",
+        workspaceCwd: worktreePath,
         worktree: {
           branchName: "feature-socket-mode",
           worktreePath,
@@ -1304,6 +1357,53 @@ describe("handleCreatePaseoWorktreeRequest", () => {
     );
 
     expect(path.basename(result.sessionConfig.cwd)).toBe("feature-x");
+  });
+
+  test("buildAgentSessionConfig keeps subdirectory cwd when creating an agent worktree", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    cleanupPaths.push(tempDir);
+    const paseoHome = path.join(tempDir, ".paseo");
+    const subdirectory = path.join(repoDir, "packages", "app");
+    mkdirSync(subdirectory, { recursive: true });
+    writeFileSync(path.join(subdirectory, "index.ts"), "export const app = true;\n");
+    execFileSync("git", ["add", "packages/app/index.ts"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["commit", "-m", "add packages/app"], { cwd: repoDir, stdio: "pipe" });
+
+    const result = await buildAgentSessionConfig(
+      {
+        paseoHome,
+        sessionLogger: createLogger(),
+        workspaceGitService: {
+          resolveRepoRoot: vi.fn(async () => repoDir),
+          resolveDefaultBranch: vi.fn(async () => "main"),
+        } as unknown as WorkspaceGitService,
+        createPaseoWorktree: createPaseoWorktreeForTest({ paseoHome }),
+        checkoutExistingBranch: async () => {
+          throw new Error("should not checkout existing branch");
+        },
+        createBranchFromBase: async () => {
+          throw new Error("should not create a branch outside the worktree service");
+        },
+      },
+      {
+        provider: "codex",
+        cwd: subdirectory,
+      },
+      {
+        createWorktree: true,
+        worktreeSlug: "agent-subdir",
+      },
+    );
+
+    const worktreeRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: result.sessionConfig.cwd,
+      stdio: "pipe",
+    })
+      .toString()
+      .trim();
+    expect(path.relative(worktreeRoot, result.sessionConfig.cwd)).toBe(
+      path.join("packages", "app"),
+    );
   });
 
   test("buildAgentSessionConfig passes prompt and attachment context into worktree creation", async () => {

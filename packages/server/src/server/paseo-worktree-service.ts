@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import {
   type PersistedWorkspaceRecord,
@@ -65,7 +67,7 @@ export async function createPaseoWorktree(
     deps,
   });
 
-  deps.github.invalidate({ cwd: createdWorktree.worktree.worktreePath });
+  deps.github.invalidate({ cwd: workspace.cwd });
 
   return {
     worktree: createdWorktree.worktree,
@@ -187,13 +189,59 @@ function maybeMarkFirstAgentBranchAutoNameEligible(options: {
   });
 }
 
+function normalizePathForPrefixComparison(value: string): string {
+  const normalized = value.replace(/\\/g, "/");
+  return /^[A-Za-z]:/.test(normalized) ? normalized.toLowerCase() : normalized;
+}
+
+function isPathInsideRoot(input: { path: string; root: string }): boolean {
+  const normalizedPath = normalizePathForPrefixComparison(input.path);
+  const normalizedRoot = normalizePathForPrefixComparison(input.root);
+  if (normalizedPath === normalizedRoot) {
+    return true;
+  }
+  const rootPrefix = normalizedRoot.endsWith("/") ? normalizedRoot : `${normalizedRoot}/`;
+  return normalizedPath.startsWith(rootPrefix);
+}
+
+function resolveWorktreeWorkspaceDirectory(options: {
+  inputCwd: string;
+  repoRoot: string;
+  worktreePath: string;
+}): string {
+  const normalizedInputCwd = normalizeWorkspaceId(options.inputCwd);
+  const normalizedRepoRoot = normalizeWorkspaceId(options.repoRoot);
+  const normalizedWorktreePath = normalizeWorkspaceId(options.worktreePath);
+
+  const relativeFromRepoRoot = path.relative(normalizedRepoRoot, normalizedInputCwd);
+  if (!relativeFromRepoRoot || relativeFromRepoRoot === ".") {
+    return normalizedWorktreePath;
+  }
+  if (relativeFromRepoRoot.startsWith("..") || path.isAbsolute(relativeFromRepoRoot)) {
+    return normalizedWorktreePath;
+  }
+
+  const mappedWorkspaceDirectory = normalizeWorkspaceId(
+    path.resolve(normalizedWorktreePath, relativeFromRepoRoot),
+  );
+  if (!isPathInsideRoot({ path: mappedWorkspaceDirectory, root: normalizedWorktreePath })) {
+    return normalizedWorktreePath;
+  }
+
+  return mappedWorkspaceDirectory;
+}
+
 async function upsertWorkspaceForWorktree(options: {
   inputCwd: string;
   repoRoot: string;
   worktree: WorktreeConfig;
   deps: Pick<CreatePaseoWorktreeDeps, "projectRegistry" | "workspaceRegistry">;
 }): Promise<PersistedWorkspaceRecord> {
-  const normalizedCwd = normalizeWorkspaceId(options.worktree.worktreePath);
+  const normalizedCwd = resolveWorktreeWorkspaceDirectory({
+    inputCwd: options.inputCwd,
+    repoRoot: options.repoRoot,
+    worktreePath: options.worktree.worktreePath,
+  });
   const normalizedInputCwd = normalizeWorkspaceId(options.inputCwd);
   const normalizedRepoRoot = normalizeWorkspaceId(options.repoRoot);
   const existingWorkspace = await findWorkspaceByDirectory(

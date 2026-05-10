@@ -1506,16 +1506,9 @@ export class Session {
 
   private async resolveWorkspaceDirectory(
     cwd: string,
-    options?: { refreshGit?: boolean },
+    _options?: { refreshGit?: boolean },
   ): Promise<string> {
-    const normalizedCwd = normalizePersistedWorkspaceId(cwd);
-    if (options?.refreshGit === false) {
-      const snapshot = this.workspaceGitService.peekSnapshot(normalizedCwd);
-      return normalizePersistedWorkspaceId(snapshot?.git.repoRoot ?? normalizedCwd);
-    }
-
-    const checkout = await this.workspaceGitService.getCheckout(normalizedCwd);
-    return normalizePersistedWorkspaceId(checkout.worktreeRoot ?? normalizedCwd);
+    return normalizePersistedWorkspaceId(cwd);
   }
 
   private async buildProjectPlacementForWorkspace(
@@ -6053,36 +6046,11 @@ export class Session {
   }
 
   private async findOrCreateWorkspaceForDirectory(cwd: string): Promise<PersistedWorkspaceRecord> {
-    const inputCwd = normalizePersistedWorkspaceId(cwd);
     const normalizedCwd = await this.resolveWorkspaceDirectory(cwd);
     const existingWorkspace = await this.findExactWorkspaceByDirectory(normalizedCwd, {
       refreshGit: false,
     });
     if (existingWorkspace) {
-      if (existingWorkspace.archivedAt && inputCwd !== normalizedCwd) {
-        const timestamp = new Date().toISOString();
-        const displayName = basename(inputCwd) || inputCwd;
-        const projectRecord = createPersistedProjectRecord({
-          projectId: inputCwd,
-          rootPath: inputCwd,
-          kind: "non_git",
-          displayName,
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        });
-        await this.projectRegistry.upsert(projectRecord);
-        const workspaceRecord = createPersistedWorkspaceRecord({
-          workspaceId: inputCwd,
-          projectId: projectRecord.projectId,
-          cwd: inputCwd,
-          kind: "directory",
-          displayName,
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        });
-        await this.workspaceRegistry.upsert(workspaceRecord);
-        return workspaceRecord;
-      }
       return this.reclassifyOrUnarchiveWorkspaceForDirectory({
         workspace: existingWorkspace,
         project: await this.projectRegistry.get(existingWorkspace.projectId),
@@ -6090,7 +6058,58 @@ export class Session {
       });
     }
 
+    const archivedAncestorFallback =
+      await this.createDirectoryWorkspaceForArchivedGitAncestor(normalizedCwd);
+    if (archivedAncestorFallback) {
+      return archivedAncestorFallback;
+    }
+
     return this.createWorkspaceForDirectory(normalizedCwd);
+  }
+
+  private async createDirectoryWorkspaceForArchivedGitAncestor(
+    cwd: string,
+  ): Promise<PersistedWorkspaceRecord | null> {
+    const checkout = await this.workspaceGitService.getCheckout(cwd);
+    if (!checkout.isGit || !checkout.worktreeRoot) {
+      return null;
+    }
+
+    const worktreeRoot = normalizePersistedWorkspaceId(checkout.worktreeRoot);
+    if (worktreeRoot === cwd) {
+      return null;
+    }
+
+    const workspaces = await this.workspaceRegistry.list();
+    const archivedAncestor = workspaces.find(
+      (workspace) => workspace.cwd === worktreeRoot && Boolean(workspace.archivedAt),
+    );
+    if (!archivedAncestor) {
+      return null;
+    }
+
+    const timestamp = new Date().toISOString();
+    const displayName = basename(cwd) || cwd;
+    const projectRecord = createPersistedProjectRecord({
+      projectId: cwd,
+      rootPath: cwd,
+      kind: "non_git",
+      displayName,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    await this.projectRegistry.upsert(projectRecord);
+    const workspaceRecord = createPersistedWorkspaceRecord({
+      workspaceId: cwd,
+      projectId: projectRecord.projectId,
+      cwd,
+      kind: "directory",
+      displayName,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    await this.workspaceRegistry.upsert(workspaceRecord);
+    return workspaceRecord;
   }
 
   private async createWorkspaceForDirectory(cwd: string): Promise<PersistedWorkspaceRecord> {
@@ -6231,10 +6250,15 @@ export class Session {
     });
     void Promise.all([
       this.notifyGitMutation(input.cwd, "create-worktree"),
-      this.notifyGitMutation(result.worktree.worktreePath, "create-worktree"),
+      this.notifyGitMutation(result.workspace.cwd, "create-worktree"),
     ]).catch((error) => {
       this.sessionLogger.warn(
-        { err: error, cwd: input.cwd, worktreePath: result.worktree.worktreePath },
+        {
+          err: error,
+          cwd: input.cwd,
+          worktreePath: result.worktree.worktreePath,
+          workspaceCwd: result.workspace.cwd,
+        },
         "Failed to warm git snapshots after creating worktree",
       );
     });
