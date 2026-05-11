@@ -37,6 +37,14 @@ on:
         options:
           - "true"
           - "false"
+      mac_signing:
+        description: "Mac build mode. Use self-use for a personal build without Apple signing."
+        required: false
+        default: "auto"
+        type: choice
+        options:
+          - auto
+          - self-use
       rollout_hours:
         description: "Linear rollout duration in hours. Use 0 for instant rollout."
         required: false
@@ -51,12 +59,13 @@ env:
   SOURCE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
   CHECKOUT_REF: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.checkout_ref || github.ref_name) || github.ref_name }}
   SHOULD_PUBLISH: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.publish != 'false' }}
+  MAC_SIGNING_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mac_signing || 'auto' }}
   ROLLOUT_HOURS: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.rollout_hours || '24' }}
   DESKTOP_PACKAGE_PATH: "packages/desktop"
 
 jobs:
   create-release:
-    if: ${{ (github.event_name == 'push' && !startsWith(github.ref_name, 'desktop-macos-v') && !startsWith(github.ref_name, 'desktop-linux-v') && !startsWith(github.ref_name, 'desktop-windows-v')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.platform == 'all' && github.event.inputs.publish != 'false') }}
+    if: ${{ (github.event_name == 'push' && !startsWith(github.ref_name, 'desktop-macos-v') && !startsWith(github.ref_name, 'desktop-linux-v') && !startsWith(github.ref_name, 'desktop-windows-v')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish != 'false') }}
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -147,6 +156,49 @@ jobs:
           fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`);
           NODE
 
+      - name: Choose mac build mode
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          has_full_apple_signing=false
+          if [[ -n "${APPLE_CERTIFICATE:-}" && -n "${APPLE_CERTIFICATE_PASSWORD:-}" && -n "${APPLE_ID:-}" && -n "${APPLE_PASSWORD:-}" && -n "${APPLE_TEAM_ID:-}" ]]; then
+            has_full_apple_signing=true
+          fi
+
+          mac_build_mode="signed"
+          reason="Apple signing secrets are available."
+
+          if [[ "$MAC_SIGNING_MODE" == "self-use" ]]; then
+            mac_build_mode="self-use"
+            reason="Manual self-use mode was selected in workflow dispatch."
+          elif [[ "$has_full_apple_signing" != "true" && "$GITHUB_REPOSITORY" != "getpaseo/paseo" ]]; then
+            mac_build_mode="self-use"
+            reason="This repository is a fork without a full Apple signing setup."
+          fi
+
+          if [[ "$mac_build_mode" == "self-use" ]]; then
+            echo "MAC_SELF_USE_BUILD=true" >> "$GITHUB_ENV"
+          else
+            echo "MAC_SELF_USE_BUILD=false" >> "$GITHUB_ENV"
+          fi
+
+          {
+            echo "### Mac build mode"
+            echo ""
+            echo "- Mode: $mac_build_mode"
+            echo "- Reason: $reason"
+            if [[ "$mac_build_mode" == "self-use" ]]; then
+              echo "- Install note: first launch on macOS may need a manual approve/open because this build skips Apple notarization."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Build desktop release
         shell: bash
         env:
@@ -163,6 +215,15 @@ jobs:
           build_args=(-- --publish never --mac --${{ matrix.electron_arch }})
           build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
           build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
+          build_args+=("-c.publish.owner=${GITHUB_REPOSITORY%/*}")
+          build_args+=("-c.publish.repo=${GITHUB_REPOSITORY#*/}")
+          if [[ "$MAC_SELF_USE_BUILD" == "true" ]]; then
+            unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+            build_args+=("-c.mac.identity=-")
+            build_args+=("-c.mac.hardenedRuntime=false")
+            build_args+=("-c.mac.notarize=false")
+          fi
           npm run build:desktop "${build_args[@]}"
 
       - name: Upload desktop artifacts to release
@@ -253,6 +314,8 @@ jobs:
           build_args=(-- --publish never --linux --x64)
           build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
           build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
+          build_args+=("-c.publish.owner=${GITHUB_REPOSITORY%/*}")
+          build_args+=("-c.publish.repo=${GITHUB_REPOSITORY#*/}")
           npm run build:desktop "${build_args[@]}"
 
       - name: Upload desktop artifacts to release
@@ -340,6 +403,8 @@ jobs:
           build_args=(-- --publish never --win --x64 --arm64)
           build_args+=("-c.publish.releaseType=$RELEASE_TYPE")
           build_args+=("-c.publish.channel=$RELEASE_CHANNEL")
+          build_args+=("-c.publish.owner=${GITHUB_REPOSITORY%/*}")
+          build_args+=("-c.publish.repo=${GITHUB_REPOSITORY#*/}")
           npm run build:desktop "${build_args[@]}"
 
       - name: Upload desktop artifacts to release

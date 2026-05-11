@@ -134,6 +134,23 @@ gh workflow run desktop-release.yml \
 
 This does **not** apply to fresh releases cut via `npm run release:patch` — that path always tag-pushes and stamps 24. For a fresh release with a custom ramp, cut normally and then dispatch `desktop-rollout.yml` (same pattern as the instant-admit flow above, with your chosen `rollout_hours`).
 
+### Mac builds for personal forks
+
+If you launch `Desktop Release` from the Actions page on a personal fork, the Mac jobs can now take a self-use path that skips Apple signing and notarization.
+
+- The workflow now shows a `mac_signing` choice on manual runs.
+- Pick `self-use` when you only need a Mac build for yourself.
+- `auto` keeps the normal signed path when Apple signing secrets are present.
+- On forks, `auto` also falls back to `self-use` when those Apple secrets are missing.
+- Manual runs with `publish=true` now create the GitHub release page even when you only build `macos`.
+- Self-use Mac builds still upload `.dmg` and `.zip` files to the release page, but macOS may ask you to approve the app manually the first time you open it.
+
+If Gatekeeper blocks the app after you install it, open it once from Finder with a manual approve/open flow, or clear the quarantine flag:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Paseo.app
+```
+
 ### Releasing during an active rollout
 
 If you ship N+1 while N is still ramping, N+1 starts a fresh rollout from its own publish timestamp. N's rollout effectively ends — the newer manifest supersedes it.
@@ -150,6 +167,16 @@ If N+1 is a hotfix for a bug in N, dispatch `desktop-rollout.yml -f tag=v0.1.<N+
 ## Release notes on GitHub
 
 The GitHub Release body is populated automatically by the `Release Notes Sync` workflow (`.github/workflows/release-notes-sync.yml`). It triggers on every `v*` tag push and on any push to `main` that touches `CHANGELOG.md`, then runs `scripts/sync-release-notes-from-changelog.mjs` to mirror the matching changelog entry into the release body. You don't need to write release notes on GitHub manually — keep `CHANGELOG.md` correct and the workflow will sync it. To force a re-sync, dispatch the workflow with the tag input.
+
+## Release retention for self-use forks
+
+If you use GitHub Releases as a rolling build bucket for a personal fork, the `Release Retention` workflow (`.github/workflows/release-retention.yml`) can keep the list short automatically.
+
+- It runs daily on the default branch and can also be launched manually from the Actions page.
+- By default it keeps the newest 10 published releases, skips drafts and immutable releases, and deletes older releases plus their same-name tags.
+- Manual runs accept `keep_count` and `dry_run` inputs so you can preview a cleanup before deleting anything.
+
+Because GitHub scheduled workflows only run from the default branch, keep the workflow file on your fork's default branch if you want the automatic cleanup to continue running.
 
 ## Website behavior
 

@@ -1,0 +1,56 @@
+name: Release Retention
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      keep_count:
+        description: "Number of newest published releases to keep."
+        required: false
+        default: "10"
+        type: string
+      dry_run:
+        description: "Report what would be deleted without deleting anything."
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+concurrency:
+  group: release-retention-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  KEEP_COUNT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.keep_count || '10' }}
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.dry_run || 'false' }}
+
+jobs:
+  prune-old-releases:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prune old releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(--repo "${{ github.repository }}" --keep "$KEEP_COUNT")
+          if [[ "$DRY_RUN" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          node scripts/prune-github-releases.mjs "${args[@]}"
