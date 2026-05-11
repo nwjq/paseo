@@ -83,6 +83,7 @@ jobs:
 
       - name: Build Android APK on EAS
         id: eas_build
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -102,6 +103,7 @@ jobs:
 
       - name: Resolve APK artifact URL
         id: artifact
+        if: steps.eas_build.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
@@ -125,8 +127,76 @@ jobs:
           echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
           echo "asset_path=$asset_path" >> "$GITHUB_OUTPUT"
 
+      - name: Build Android APK locally
+        id: local_artifact
+        if: steps.eas_build.outcome != 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd packages/app
+
+          APP_VARIANT=production npx expo prebuild --platform android --non-interactive --clean
+
+          cd android
+          ./gradlew :app:assembleRelease -x lint -x lintVitalAnalyzeRelease -x lintVitalRelease -x generateReleaseLintModel -x generateReleaseLintVitalModel
+
+          apk_path="$(find app/build/outputs/apk/release -name '*.apk' -print | sort | head -n 1)"
+          if [ -z "$apk_path" ]; then
+            echo "Failed to find locally built APK."
+            find app/build/outputs -type f -maxdepth 6 || true
+            exit 1
+          fi
+
+          asset_name="paseo-${RELEASE_TAG}-android.apk"
+          asset_path="$RUNNER_TEMP/$asset_name"
+          unsigned_path="$RUNNER_TEMP/${asset_name%.apk}-unsigned.apk"
+          aligned_path="$RUNNER_TEMP/${asset_name%.apk}-aligned.apk"
+
+          cp "$apk_path" "$unsigned_path"
+
+          debug_keystore="$HOME/.android/debug.keystore"
+          mkdir -p "$(dirname "$debug_keystore")"
+          if [ ! -f "$debug_keystore" ]; then
+            keytool -genkeypair \
+              -storepass android \
+              -keypass android \
+              -keystore "$debug_keystore" \
+              -alias androiddebugkey \
+              -dname "CN=Android Debug,O=Android,C=US" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000
+          fi
+
+          zipalign_bin="$(find "$ANDROID_HOME/build-tools" -name zipalign -type f | sort -V | tail -n 1)"
+          apksigner_bin="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
+          if [ -z "$zipalign_bin" ] || [ -z "$apksigner_bin" ]; then
+            echo "Android build tools missing zipalign or apksigner."
+            exit 1
+          fi
+
+          "$zipalign_bin" -p -f 4 "$unsigned_path" "$aligned_path"
+          "$apksigner_bin" sign \
+            --ks "$debug_keystore" \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --out "$asset_path" \
+            "$aligned_path"
+          "$apksigner_bin" verify "$asset_path"
+
+          echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
+          echo "asset_path=$asset_path" >> "$GITHUB_OUTPUT"
+
       - name: Upload APK to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EAS_ASSET_PATH: ${{ steps.artifact.outputs.asset_path }}
+          LOCAL_ASSET_PATH: ${{ steps.local_artifact.outputs.asset_path }}
         run: |
-          gh release upload "$RELEASE_TAG" "${{ steps.artifact.outputs.asset_path }}" --clobber --repo "${{ github.repository }}"
+          set -euo pipefail
+          asset_path="${EAS_ASSET_PATH:-$LOCAL_ASSET_PATH}"
+          if [ -z "$asset_path" ]; then
+            echo "No APK asset path was produced."
+            exit 1
+          fi
+          gh release upload "$RELEASE_TAG" "$asset_path" --clobber --repo "${{ github.repository }}"
