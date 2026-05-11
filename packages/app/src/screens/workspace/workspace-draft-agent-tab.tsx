@@ -71,6 +71,7 @@ function resolveAutoSubmitConfig(
 
 function validateDraftSubmission(input: {
   text: string;
+  cwd: string;
   allowsEmptyAutoSubmit: boolean;
   composerState: {
     providerDefinitions: unknown[];
@@ -84,6 +85,7 @@ function validateDraftSubmission(input: {
 }): string | null {
   const {
     text,
+    cwd,
     allowsEmptyAutoSubmit,
     composerState,
     autoSubmitConfig,
@@ -107,6 +109,9 @@ function validateDraftSubmission(input: {
   }
   if (!workspaceDirectory) {
     return "Workspace directory not found";
+  }
+  if (cwd.trim() !== workspaceDirectory) {
+    return "Workspace directory changed. Reopen the workspace and try again.";
   }
   if (!hasClient) {
     return "Host is not connected";
@@ -147,6 +152,7 @@ function resolveDraftModeId(input: {
 async function submitDraftCreateRequest(input: {
   attempt: { clientMessageId: string };
   text: string;
+  cwd: string;
   images?: UserMessageImageAttachment[];
   attachments?: unknown;
   client: DaemonClient | null;
@@ -165,6 +171,7 @@ async function submitDraftCreateRequest(input: {
   const {
     attempt,
     text,
+    cwd,
     images,
     attachments,
     client,
@@ -191,7 +198,7 @@ async function submitDraftCreateRequest(input: {
   });
   const config = buildWorkspaceDraftAgentConfig({
     provider,
-    cwd: workspaceDirectory,
+    cwd,
     ...modeIdOverride,
     model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
     thinkingOptionId:
@@ -217,7 +224,7 @@ async function submitDraftCreateRequest(input: {
 }
 
 function buildDraftAgentSnapshot(input: {
-  attempt: { timestamp: Date };
+  attempt: { timestamp: Date; cwd: string };
   serverId: string;
   tabId: string;
   workspaceDirectory: string | null;
@@ -262,7 +269,7 @@ function buildDraftAgentSnapshot(input: {
     persistence: null,
     runtimeInfo: { provider, sessionId: null, model, modeId },
     title: "Agent",
-    cwd: workspaceDirectory,
+    cwd: attempt.cwd,
     model,
     features: composerState.statusControls.features,
     thinkingOptionId,
@@ -375,9 +382,10 @@ export function WorkspaceDraftAgentTab({
     draftId,
     getPendingServerId: () => serverId,
     allowEmptyText: allowsEmptyAutoSubmit,
-    validateBeforeSubmit: ({ text }) =>
+    validateBeforeSubmit: ({ text, cwd }) =>
       validateDraftSubmission({
         text,
+        cwd,
         allowsEmptyAutoSubmit,
         composerState,
         autoSubmitConfig,
@@ -400,10 +408,11 @@ export function WorkspaceDraftAgentTab({
         autoSubmitConfig,
         composerState,
       }),
-    createRequest: async ({ attempt, text, images, attachments }) =>
+    createRequest: async ({ attempt, text, cwd, images, attachments }) =>
       submitDraftCreateRequest({
         attempt,
         text,
+        cwd,
         images,
         attachments,
         client,

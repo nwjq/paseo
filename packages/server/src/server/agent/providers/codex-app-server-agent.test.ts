@@ -252,6 +252,62 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test("starts Codex app-server in the agent cwd", async () => {
+    const cwd = "/tmp/paseo-codex-subdir-cwd";
+    const appServer = createFakeCodexAppServer();
+    let spawnedCwd: string | undefined;
+    const provider = new CodexAppServerAgentClient(createTestLogger());
+    const providerAccess = castInternals<{
+      resolveGoalsEnabled: () => Promise<boolean>;
+      spawnAppServer: (
+        launchEnv?: Record<string, string>,
+        options?: { goalsEnabled?: boolean; cwd?: string },
+      ) => Promise<ChildProcessWithoutNullStreams>;
+    }>(provider);
+    providerAccess.resolveGoalsEnabled = async () => false;
+    providerAccess.spawnAppServer = async (_launchEnv, options) => {
+      spawnedCwd = options?.cwd;
+      return appServer.child;
+    };
+
+    const session = await provider.createSession(createConfig({ cwd }));
+
+    expect(spawnedCwd).toBe(cwd);
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("resumes Codex app-server in the persisted agent cwd", async () => {
+    const cwd = "/tmp/paseo-codex-resume-subdir-cwd";
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: ["thread-1"] }),
+      "thread/read": () => ({ thread: { turns: [] } }),
+    });
+    let spawnedCwd: string | undefined;
+    const provider = new CodexAppServerAgentClient(createTestLogger());
+    const providerAccess = castInternals<{
+      resolveGoalsEnabled: () => Promise<boolean>;
+      spawnAppServer: (
+        launchEnv?: Record<string, string>,
+        options?: { goalsEnabled?: boolean; cwd?: string },
+      ) => Promise<ChildProcessWithoutNullStreams>;
+    }>(provider);
+    providerAccess.resolveGoalsEnabled = async () => false;
+    providerAccess.spawnAppServer = async (_launchEnv, options) => {
+      spawnedCwd = options?.cwd;
+      return appServer.child;
+    };
+
+    const session = await provider.resumeSession({
+      sessionId: "thread-1",
+      metadata: { provider: "codex", cwd, modeId: "auto", model: "gpt-5.4" },
+    });
+
+    expect(spawnedCwd).toBe(cwd);
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
   test("lists skills from the exact cwd instead of repo root", async () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), "codex-skills-"));
     const cwd = path.join(tempDir, "repo", "packages", "app");

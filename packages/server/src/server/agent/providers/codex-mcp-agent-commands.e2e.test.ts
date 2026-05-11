@@ -93,7 +93,7 @@ describe("codex agent commands E2E", () => {
     rmSync(codexHome, { recursive: true, force: true });
   }, 30_000);
 
-  test("lists exact-cwd local Codex skills through daemon", async () => {
+  test("lists exact-cwd local skills for draft composer commands through daemon", async () => {
     if (!(await isProviderAvailable("codex"))) {
       return;
     }
@@ -126,18 +126,72 @@ describe("codex agent commands E2E", () => {
     );
 
     try {
-      const agent = await ctx.client.createAgent({
-        ...getFullAccessConfig("codex"),
-        cwd,
-        title: "Codex Subdirectory Skill Test Agent",
+      const config = getFullAccessConfig("codex");
+      const result = await ctx.client.listCommands("__new_agent__", {
+        draftConfig: {
+          provider: "codex",
+          cwd,
+          modeId: config.modeId,
+          model: config.model,
+          thinkingOptionId: config.thinkingOptionId,
+        },
       });
-
-      const result = await ctx.client.listCommands(agent.id);
 
       expect(result.error).toBeNull();
       expect(result.commands).toContainEqual({
         name: skillName,
         description: "Subdirectory-only Codex skill",
+        argumentHint: "",
+      });
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  test("lists exact-cwd local skills after creating a Codex agent through daemon", async () => {
+    if (!(await isProviderAvailable("codex"))) {
+      return;
+    }
+
+    await ctx.cleanup();
+    ctx = await createDaemonTestContext({
+      agentClients: {
+        codex: new CodexAppServerAgentClient(pino({ level: "silent" })),
+      },
+    });
+
+    const workspaceRoot = tmpDir("codex-created-subdir-skills-workspace-");
+    const cwd = path.join(workspaceRoot, "repo", "packages", "app");
+    const skillName = `created-subdir-skill-${Date.now()}`;
+    const skillDir = path.join(cwd, ".codex", "skills", skillName);
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      path.join(skillDir, "SKILL.md"),
+      [
+        "---",
+        `name: ${skillName}`,
+        "description: Created-agent subdirectory Codex skill",
+        "user-invocable: true",
+        "---",
+        "",
+        "When invoked, respond with exactly PASEO_CREATED_SUBDIR_SKILL_OK.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    try {
+      const agent = await ctx.client.createAgent({
+        ...getFullAccessConfig("codex"),
+        cwd,
+        title: "Codex Created Subdirectory Skill Test Agent",
+      });
+      const result = await ctx.client.listCommands(agent.id);
+
+      expect(result.error).toBeNull();
+      expect(result.commands).toContainEqual({
+        name: skillName,
+        description: "Created-agent subdirectory Codex skill",
         argumentHint: "",
       });
     } finally {

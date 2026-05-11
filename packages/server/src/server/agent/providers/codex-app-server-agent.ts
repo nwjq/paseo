@@ -4582,7 +4582,7 @@ export class CodexAppServerAgentClient implements AgentClient {
 
   private async spawnAppServer(
     launchEnv?: Record<string, string>,
-    options?: { goalsEnabled?: boolean },
+    options?: { goalsEnabled?: boolean; cwd?: string },
   ): Promise<ChildProcessWithoutNullStreams> {
     const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
     const args = [...launchPrefix.args, "app-server"];
@@ -4597,6 +4597,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       "Spawning Codex app server",
     );
     const child = spawnProcess(launchPrefix.command, args, {
+      ...(options?.cwd ? { cwd: options.cwd } : {}),
       detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"],
       ...createProviderEnvSpec({
@@ -4626,7 +4627,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       sessionConfig,
       null,
       this.logger,
-      () => this.spawnAppServer(launchContext?.env, { goalsEnabled }),
+      () => this.spawnAppServer(launchContext?.env, { goalsEnabled, cwd: sessionConfig.cwd }),
       this.deps,
       options?.persistSession === false,
       goalsEnabled,
@@ -4652,7 +4653,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       merged,
       handle,
       this.logger,
-      () => this.spawnAppServer(launchContext?.env, { goalsEnabled }),
+      () => this.spawnAppServer(launchContext?.env, { goalsEnabled, cwd: merged.cwd }),
       this.deps,
       false,
       goalsEnabled,
