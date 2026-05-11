@@ -2,8 +2,10 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import pino from "pino";
 import { createDaemonTestContext, type DaemonTestContext } from "../../test-utils/index.js";
-import { getFullAccessConfig } from "../../daemon-e2e/agent-configs.js";
+import { getFullAccessConfig, isProviderAvailable } from "../../daemon-e2e/agent-configs.js";
+import { CodexAppServerAgentClient } from "./codex-app-server-agent.js";
 
 function tmpDir(prefix: string): string {
   return mkdtempSync(path.join(tmpdir(), prefix));
@@ -89,6 +91,58 @@ describe("codex agent commands E2E", () => {
       process.env.CODEX_HOME = prevCodexHome;
     }
     rmSync(codexHome, { recursive: true, force: true });
+  }, 30_000);
+
+  test("lists exact-cwd local Codex skills through daemon", async () => {
+    if (!(await isProviderAvailable("codex"))) {
+      return;
+    }
+
+    await ctx.cleanup();
+    ctx = await createDaemonTestContext({
+      agentClients: {
+        codex: new CodexAppServerAgentClient(pino({ level: "silent" })),
+      },
+    });
+
+    const workspaceRoot = tmpDir("codex-subdir-skills-workspace-");
+    const cwd = path.join(workspaceRoot, "repo", "packages", "app");
+    const skillName = `subdir-skill-${Date.now()}`;
+    const skillDir = path.join(cwd, ".codex", "skills", skillName);
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      path.join(skillDir, "SKILL.md"),
+      [
+        "---",
+        `name: ${skillName}`,
+        "description: Subdirectory-only Codex skill",
+        "user-invocable: true",
+        "---",
+        "",
+        "When invoked, respond with exactly PASEO_SUBDIR_SKILL_OK.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    try {
+      const agent = await ctx.client.createAgent({
+        ...getFullAccessConfig("codex"),
+        cwd,
+        title: "Codex Subdirectory Skill Test Agent",
+      });
+
+      const result = await ctx.client.listCommands(agent.id);
+
+      expect(result.error).toBeNull();
+      expect(result.commands).toContainEqual({
+        name: skillName,
+        description: "Subdirectory-only Codex skill",
+        argumentHint: "",
+      });
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true });
+    }
   }, 30_000);
 
   test("executes a custom prompt via normal sendMessage path (prompts:*)", async () => {

@@ -210,6 +210,7 @@ Concrete requirement:
 - If you create a new workspace/worktree from that workspace, the new workspace must land in the corresponding subdirectory inside the new worktree, not in the worktree root.
 - If you archive a worktree created from that subdirectory, the subdirectory workspace record must archive with it. Do not leave an active workspace entry behind just because the worktree root and workspace `cwd` are different paths.
 - Project grouping may still use git metadata like the main repo root or remote URL. Only the workspace `cwd` must stay exact.
+- Codex local skill fallback must use the exact workspace subdirectory (`cwd/.codex/skills`) instead of falling back to the git repo root.
 
 When pulling from upstream, treat changes around project/workspace/worktree resolution as high-risk merge areas. In particular, review changes touching:
 
@@ -218,6 +219,7 @@ When pulling from upstream, treat changes around project/workspace/worktree reso
 - `packages/server/src/server/paseo-worktree-service.ts`
 - `packages/server/src/server/paseo-worktree-archive-service.ts`
 - `packages/server/src/server/agent/mcp-server.ts`
+- `packages/server/src/server/agent/providers/codex-app-server-agent.ts`
 - `packages/app/src/stores/session-store-hooks.ts`
 - `packages/app/src/hooks/use-sidebar-workspaces-list.ts`
 - `packages/app/src/components/sidebar-workspace-list.tsx`

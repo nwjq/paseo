@@ -102,6 +102,16 @@ function markdownImageSource(markdown: string): string {
   return match[1].replace(/\\\)/g, ")");
 }
 
+function writeTestSkill(rootDir: string, skillName: string, description: string): void {
+  const skillDir = path.join(rootDir, skillName);
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(
+    path.join(skillDir, "SKILL.md"),
+    ["---", `name: ${skillName}`, `description: ${description}`, "---", ""].join("\n"),
+    "utf8",
+  );
+}
+
 describe("Codex app-server provider", () => {
   test("passes ephemeral: true to thread/start when constructed as ephemeral", async () => {
     const requests: Array<{ method: string; params: unknown }> = [];
@@ -242,29 +252,40 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
-  test("lists repo skills using WorkspaceGitService repo-root resolution", async () => {
+  test("lists skills from the exact cwd instead of repo root", async () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), "codex-skills-"));
     const cwd = path.join(tempDir, "repo", "packages", "app");
     const repoSkillDir = path.join(tempDir, "repo", ".codex", "skills", "shipper");
+    const cwdSkillDir = path.join(cwd, ".codex", "skills", "subdir-shipper");
     mkdirSync(cwd, { recursive: true });
     mkdirSync(repoSkillDir, { recursive: true });
+    mkdirSync(cwdSkillDir, { recursive: true });
     writeFileSync(
       path.join(repoSkillDir, "SKILL.md"),
       "---\nname: shipper\ndescription: Ship changes carefully.\n---\n",
+    );
+    writeFileSync(
+      path.join(cwdSkillDir, "SKILL.md"),
+      "---\nname: subdir-shipper\ndescription: Ship subdirectory changes carefully.\n---\n",
     );
     const workspaceGitService = {
       resolveRepoRoot: vi.fn().mockResolvedValue(path.join(tempDir, "repo")),
     };
 
     try {
-      await expect(
-        __codexAppServerInternals.listCodexSkills(cwd, workspaceGitService),
-      ).resolves.toContainEqual({
+      const commands = await __codexAppServerInternals.listCodexSkills(cwd, workspaceGitService);
+
+      expect(commands).toContainEqual({
+        name: "subdir-shipper",
+        description: "Ship subdirectory changes carefully.",
+        argumentHint: "",
+      });
+      expect(commands).not.toContainEqual({
         name: "shipper",
         description: "Ship changes carefully.",
         argumentHint: "",
       });
-      expect(workspaceGitService.resolveRepoRoot).toHaveBeenCalledWith(cwd);
+      expect(workspaceGitService.resolveRepoRoot).not.toHaveBeenCalled();
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
@@ -500,6 +521,48 @@ describe("Codex app-server provider", () => {
         ],
       }),
     );
+  });
+
+  test("merges exact-cwd local skills with app-server skills", async () => {
+    const tempDir = await mkdtemp(path.join(tmpdir(), "codex-local-skill-commands-"));
+    const cwd = path.join(tempDir, "repo", "packages", "app");
+    mkdirSync(cwd, { recursive: true });
+    writeTestSkill(path.join(cwd, ".codex", "skills"), "local-workflow", "Local workflow.");
+    const session = createSession({ cwd });
+    const request = vi.fn(async (method: string) => {
+      if (method === "skills/list") {
+        return {
+          data: [
+            {
+              cwd,
+              skills: [
+                {
+                  name: "global-helper",
+                  description: "Global helper.",
+                  path: "/tmp/skills/global-helper/SKILL.md",
+                },
+              ],
+              errors: [],
+            },
+          ],
+        };
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    session.client = createStub<CodexClientLike>({ request });
+
+    try {
+      const commands = await session.listCommands?.();
+
+      expect(commands).toEqual(
+        expect.arrayContaining([
+          { name: "local-workflow", description: "Local workflow.", argumentHint: "" },
+          { name: "global-helper", description: "Global helper.", argumentHint: "" },
+        ]),
+      );
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   test("maps image prompt blocks to Codex localImage input", async () => {

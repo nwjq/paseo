@@ -33,7 +33,7 @@ import { homedir } from "node:os";
 
 import type { ChildProcess, ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { Dirent } from "node:fs";
+import type { Dirent } from "node:fs";
 import * as fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -485,20 +485,34 @@ async function listCodexCustomPrompts(): Promise<AgentSlashCommand[]> {
 
 async function listCodexSkills(
   cwd: string,
-  workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">,
+  _workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">,
 ): Promise<AgentSlashCommand[]> {
+  const skills = await listCodexSkillEntries(cwd, { includeGlobal: true });
+  return skills
+    .map((skill) => ({
+      name: skill.name,
+      description: skill.description,
+      argumentHint: "",
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+interface CodexSkillEntry {
+  name: string;
+  description: string;
+  path: string;
+}
+
+async function listCodexSkillEntries(
+  cwd: string,
+  options: { includeGlobal?: boolean } = {},
+): Promise<CodexSkillEntry[]> {
   const candidates: string[] = [];
   candidates.push(path.join(cwd, ".codex", "skills"));
 
-  const repoRoot = workspaceGitService
-    ? await workspaceGitService.resolveRepoRoot(cwd).catch(() => null)
-    : null;
-  if (repoRoot) {
-    candidates.push(path.join(path.dirname(cwd), ".codex", "skills"));
-    candidates.push(path.join(repoRoot, ".codex", "skills"));
+  if (options.includeGlobal) {
+    candidates.push(path.join(resolveCodexHomeDir(), "skills"));
   }
-
-  candidates.push(path.join(resolveCodexHomeDir(), "skills"));
 
   const candidateReads = await Promise.all(
     candidates.map(async (dir) => {
@@ -506,44 +520,52 @@ async function listCodexSkills(
       try {
         entries = await fs.readdir(dir, { withFileTypes: true });
       } catch {
-        return [] as string[];
+        return [] as CodexSkillEntry[];
       }
       const dirEntries = entries.filter((entry) => entry.isDirectory() || entry.isSymbolicLink());
-      const skillContents = await Promise.all(
-        dirEntries.map(async (entry) => {
-          const skillDir = path.join(dir, entry.name);
-          const skillPath = path.join(skillDir, "SKILL.md");
+      const skills = await Promise.all(
+        dirEntries.map(async (entry): Promise<CodexSkillEntry | null> => {
+          const skillPath = path.join(dir, entry.name, "SKILL.md");
+          let content: string;
           try {
-            return await fs.readFile(skillPath, "utf8");
+            content = await fs.readFile(skillPath, "utf8");
           } catch {
             return null;
           }
+          const { frontMatter } = parseFrontMatter(content);
+          const name = frontMatter["name"];
+          const description = frontMatter["description"];
+          if (!name || !description) {
+            return null;
+          }
+          return { name, description, path: skillPath };
         }),
       );
-      return skillContents.filter((content): content is string => content !== null);
+      return skills.filter((skill): skill is CodexSkillEntry => skill !== null);
     }),
   );
 
-  const commandsByName = new Map<string, AgentSlashCommand>();
-  for (const skillContents of candidateReads) {
-    for (const content of skillContents) {
-      const { frontMatter } = parseFrontMatter(content);
-      const name = frontMatter["name"];
-      const description = frontMatter["description"];
-      if (!name || !description) {
-        continue;
-      }
-      if (!commandsByName.has(name)) {
-        commandsByName.set(name, {
-          name,
-          description,
-          argumentHint: "",
-        });
+  const byName = new Map<string, CodexSkillEntry>();
+  for (const skills of candidateReads) {
+    for (const skill of skills) {
+      if (!byName.has(skill.name)) {
+        byName.set(skill.name, skill);
       }
     }
   }
+  return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
 
-  return Array.from(commandsByName.values()).sort((a, b) => a.name.localeCompare(b.name));
+function mergeCodexSkills(...skillLists: CodexSkillEntry[][]): CodexSkillEntry[] {
+  const byName = new Map<string, CodexSkillEntry>();
+  for (const skills of skillLists) {
+    for (const skill of skills) {
+      if (!byName.has(skill.name)) {
+        byName.set(skill.name, skill);
+      }
+    }
+  }
+  return Array.from(byName.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function escapeRegExp(value: string): string {
@@ -2593,14 +2615,14 @@ class CodexAppServerAgentSession implements AgentSession {
     settings: Record<string, unknown>;
     name: string;
   } | null = null;
-  private cachedSkills: Array<{ name: string; description: string; path: string }> = [];
+  private cachedSkills: CodexSkillEntry[] = [];
 
   constructor(
     config: AgentSessionConfig,
     private readonly resumeHandle: { sessionId: string; metadata?: Record<string, unknown> } | null,
     logger: Logger,
     private readonly spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>,
-    private readonly deps: CodexAppServerAgentDeps = {},
+    _deps: CodexAppServerAgentDeps = {},
     private readonly ephemeral: boolean = false,
     private readonly goalsEnabled: boolean = false,
   ) {
@@ -2687,6 +2709,7 @@ class CodexAppServerAgentSession implements AgentSession {
 
   private async loadSkills(): Promise<void> {
     if (!this.client) return;
+    let appServerSkills: CodexSkillEntry[] = [];
     try {
       const response = toObjectRecord(
         await this.client.request("skills/list", {
@@ -2709,11 +2732,28 @@ class CodexAppServerAgentSession implements AgentSession {
           });
         }
       }
-      this.cachedSkills = skills;
+      appServerSkills = skills;
     } catch (error) {
       this.logger.trace({ error }, "Failed to load skills list");
-      this.cachedSkills = [];
     }
+
+    let localSkills: CodexSkillEntry[] = [];
+    try {
+      localSkills = await listCodexSkillEntries(this.config.cwd);
+    } catch (error) {
+      this.logger.trace({ error }, "Failed to load local Codex skills");
+    }
+
+    let fallbackSkills = localSkills;
+    if (appServerSkills.length === 0) {
+      try {
+        fallbackSkills = await listCodexSkillEntries(this.config.cwd, { includeGlobal: true });
+      } catch (error) {
+        this.logger.trace({ error }, "Failed to load fallback Codex skills");
+      }
+    }
+
+    this.cachedSkills = mergeCodexSkills(fallbackSkills, appServerSkills);
   }
 
   private findCollaborationMode(target: "code" | "plan"): {
@@ -3394,15 +3434,11 @@ class CodexAppServerAgentSession implements AgentSession {
     } else {
       await this.loadSkills();
     }
-    const appServerSkills = this.cachedSkills.map((skill) => ({
+    const skillCommands = this.cachedSkills.map((skill) => ({
       name: skill.name,
       description: skill.description,
       argumentHint: "",
     }));
-    const fallbackSkills =
-      appServerSkills.length === 0
-        ? await listCodexSkills(this.config.cwd, this.deps.workspaceGitService)
-        : [];
     const builtin: AgentSlashCommand[] = [];
     if (this.goalsEnabled) {
       builtin.push({
@@ -3411,9 +3447,7 @@ class CodexAppServerAgentSession implements AgentSession {
         argumentHint: "[<objective>|pause|resume|clear]",
       });
     }
-    return [...builtin, ...appServerSkills, ...fallbackSkills, ...prompts].sort((a, b) =>
-      a.name.localeCompare(b.name),
-    );
+    return [...builtin, ...skillCommands, ...prompts].sort((a, b) => a.name.localeCompare(b.name));
   }
 
   tryHandleOutOfBand(
