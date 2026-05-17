@@ -31,6 +31,8 @@ export interface SidebarWorkspaceEntry {
   statusBucket: SidebarStateBucket;
   archivingAt: string | null;
   diffStat: { additions: number; deletions: number } | null;
+  archiveHasUncommittedChanges: boolean | null;
+  archiveUnpushedCommitCount: number | null;
   scripts: WorkspaceDescriptor["scripts"];
   hasRunningScripts: boolean;
 }
@@ -71,6 +73,8 @@ function createStructuralWorkspaceEntry(input: {
     statusBucket: "done",
     archivingAt: null,
     diffStat: null,
+    archiveHasUncommittedChanges: null,
+    archiveUnpushedCommitCount: null,
     scripts: [],
     hasRunningScripts: false,
   };
@@ -93,6 +97,8 @@ export function createSidebarWorkspaceEntry(input: {
     statusBucket: input.workspace.status,
     archivingAt: input.workspace.archivingAt,
     diffStat: input.workspace.diffStat,
+    archiveHasUncommittedChanges: input.workspace.gitRuntime?.isDirty ?? null,
+    archiveUnpushedCommitCount: input.workspace.gitRuntime?.aheadOfOrigin ?? null,
     scripts: input.workspace.scripts,
     hasRunningScripts: input.workspace.scripts.some((script) => script.lifecycle === "running"),
   };

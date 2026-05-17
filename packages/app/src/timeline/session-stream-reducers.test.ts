@@ -218,6 +218,34 @@ describe("processTimelineResponse", () => {
     expect(result.sideEffects.some((e) => e.type === "flush_pending_updates")).toBe(true);
   });
 
+  it("uses the timeline entry timestamp as canonical", () => {
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      payload: {
+        ...baseTimelineInput.payload,
+        reset: true,
+        startCursor: { seq: 1 },
+        endCursor: { seq: 2 },
+        entries: [
+          {
+            ...makeTimelineEntry(1, "hello", "user_message"),
+            timestamp: new Date("2025-01-01T12:00:03Z").toISOString(),
+          },
+          {
+            ...makeTimelineEntry(2, "reply"),
+            timestamp: new Date("2025-01-01T12:00:04Z").toISOString(),
+          },
+        ],
+      },
+    });
+
+    const user = result.tail.find((item) => item.kind === "user_message");
+    const assistant = result.tail.find((item) => item.kind === "assistant_message");
+
+    expect(user?.timestamp.toISOString()).toBe("2025-01-01T12:00:03.000Z");
+    expect(assistant?.timestamp.toISOString()).toBe("2025-01-01T12:00:04.000Z");
+  });
+
   it("sets cursor to null when reset=true but no cursors in payload", () => {
     const result = processTimelineResponse({
       ...baseTimelineInput,

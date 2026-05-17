@@ -82,7 +82,11 @@ import type { DaemonConfigStore } from "./daemon-config-store.js";
 import { applyMutableProviderConfigToOverrides } from "./daemon-config-store.js";
 import { getErrorMessage, getErrorMessageOr } from "../shared/error-utils.js";
 import { getAgentStatusPriority } from "../shared/agent-state-bucket.js";
-import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
+import type {
+  WorkspaceGitRuntimeSnapshot,
+  WorkspaceGitService,
+  WorkspaceGitSnapshotOptions,
+} from "./workspace-git-service.js";
 
 import { buildProviderRegistry } from "./agent/provider-registry.js";
 import type {
@@ -92,6 +96,7 @@ import type {
 import { AgentManager } from "./agent/agent-manager.js";
 import { ProviderSnapshotManager, resolveSnapshotCwd } from "./agent/provider-snapshot-manager.js";
 import type {
+  AgentManagerEvent,
   AgentTimelineCursor,
   AgentTimelineFetchDirection,
   ManagedAgent,
@@ -149,6 +154,7 @@ import {
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
+  resolveProjectDisplayName,
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
   type ProjectRegistry,
@@ -211,6 +217,8 @@ import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
 import { execCommand } from "../utils/spawn.js";
 import {
+  assertPullRequestAutoMergeDisableReady,
+  assertPullRequestAutoMergeEnableReady,
   createGitHubService,
   type GitHubService,
   type PullRequestTimelineItem,
@@ -241,6 +249,12 @@ import {
 import { toWorktreeWireError } from "./worktree-errors.js";
 
 const WORKSPACE_GIT_WATCH_REMOVED_STATE_KEY = "__removed__";
+
+type CurrentWorkspacePullRequest = NonNullable<
+  WorkspaceGitRuntimeSnapshot["github"]["pullRequest"]
+> & {
+  number: number;
+};
 
 interface ResolveKnownProjectRootForConfigInput {
   repoRoot: string;
@@ -288,6 +302,8 @@ type GitMutationRefreshReason =
   | "merge-to-base"
   | "merge-from-base"
   | "merge-pr"
+  | "enable-pr-auto-merge"
+  | "disable-pr-auto-merge"
   | "create-pr"
   | "switch-branch"
   | "create-branch"
@@ -1262,20 +1278,8 @@ export class Session {
         // Reduce bandwidth/CPU on mobile: only forward high-frequency agent stream events
         // for the focused agent, with a short grace window while backgrounded.
         // History catch-up is handled via pull-based `fetch_agent_timeline_request`.
-        const activity = this.clientActivity;
-        if (activity?.deviceType === "mobile") {
-          if (!activity.focusedAgentId) {
-            return;
-          }
-          if (activity.focusedAgentId !== event.agentId) {
-            return;
-          }
-          if (!activity.appVisible) {
-            const hiddenForMs = Date.now() - activity.appVisibilityChangedAt.getTime();
-            if (hiddenForMs >= this.MOBILE_BACKGROUND_STREAM_GRACE_MS) {
-              return;
-            }
-          }
+        if (this.shouldSkipAgentStreamForward(event.agentId)) {
+          return;
         }
 
         const serializedEvent = serializeAgentStreamEvent(event.event);
@@ -1294,17 +1298,9 @@ export class Session {
           "agent.session.forward_stream",
         );
 
-        const payload = {
-          agentId: event.agentId,
-          event: serializedEvent,
-          timestamp: new Date().toISOString(),
-          ...(typeof event.seq === "number" ? { seq: event.seq } : {}),
-          ...(typeof event.epoch === "string" ? { epoch: event.epoch } : {}),
-        } as const;
-
         this.emit({
           type: "agent_stream",
-          payload,
+          payload: this.buildAgentStreamPayload(event, serializedEvent),
         });
 
         if (event.event.type === "permission_requested") {
@@ -1330,6 +1326,34 @@ export class Session {
       },
       { replayState: false },
     );
+  }
+
+  private shouldSkipAgentStreamForward(agentId: string): boolean {
+    const activity = this.clientActivity;
+    if (activity?.deviceType !== "mobile") {
+      return false;
+    }
+    if (!activity.focusedAgentId || activity.focusedAgentId !== agentId) {
+      return true;
+    }
+    if (activity.appVisible) {
+      return false;
+    }
+    const hiddenForMs = Date.now() - activity.appVisibilityChangedAt.getTime();
+    return hiddenForMs >= this.MOBILE_BACKGROUND_STREAM_GRACE_MS;
+  }
+
+  private buildAgentStreamPayload(
+    event: Extract<AgentManagerEvent, { type: "agent_stream" }>,
+    serializedEvent: Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"]["event"],
+  ): Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"] {
+    return {
+      agentId: event.agentId,
+      event: serializedEvent,
+      timestamp: event.timestamp ?? new Date().toISOString(),
+      ...(typeof event.seq === "number" ? { seq: event.seq } : {}),
+      ...(typeof event.epoch === "string" ? { epoch: event.epoch } : {}),
+    };
   }
 
   private async buildAgentPayload(agent: ManagedAgent): Promise<AgentSnapshotPayload> {
@@ -1555,7 +1579,7 @@ export class Session {
     const checkout = buildWorkspaceCheckout(workspace, project);
     return {
       projectKey: project.projectId,
-      projectName: project.displayName,
+      projectName: resolveProjectDisplayName(project),
       checkout,
     };
   }
@@ -1785,6 +1809,8 @@ export class Session {
         return this.handleCloseItemsRequest(msg);
       case "update_agent_request":
         return this.handleUpdateAgentRequest(msg.agentId, msg.name, msg.labels, msg.requestId);
+      case "project.rename.request":
+        return this.handleProjectRenameRequest(msg.projectId, msg.customName, msg.requestId);
       case "send_agent_message_request":
         return this.handleSendAgentMessageRequest(msg);
       case "wait_for_finish_request":
@@ -2006,6 +2032,8 @@ export class Session {
         return this.handleCheckoutPrCreateRequest(msg);
       case "checkout_pr_merge_request":
         return this.handleCheckoutPrMergeRequest(msg);
+      case "checkout.github.set_auto_merge.request":
+        return this.handleCheckoutGithubSetAutoMergeRequest(msg);
       case "checkout_pr_status_request":
         return this.handleCheckoutPrStatusRequest(msg);
       case "pull_request_timeline_request":
@@ -2467,6 +2495,90 @@ export class Session {
           agentId,
           accepted: false,
           error: getErrorMessageOr(error, "Failed to update agent"),
+        },
+      });
+    }
+  }
+
+  private async handleProjectRenameRequest(
+    projectId: string,
+    customName: string | null,
+    requestId: string,
+  ): Promise<void> {
+    this.sessionLogger.info(
+      { projectId, requestId, hasCustomName: typeof customName === "string" },
+      "session: project.rename.request",
+    );
+
+    try {
+      const existing = await this.projectRegistry.get(projectId);
+      if (!existing) {
+        this.emit({
+          type: "project.rename.response",
+          payload: {
+            requestId,
+            projectId,
+            accepted: false,
+            customName: null,
+            error: "Project not found",
+          },
+        });
+        return;
+      }
+
+      const trimmed = customName?.trim() ?? "";
+      const nextCustomName = trimmed.length === 0 ? null : trimmed;
+
+      await this.projectRegistry.upsert({
+        ...existing,
+        customName: nextCustomName,
+        updatedAt: new Date().toISOString(),
+      });
+
+      this.emit({
+        type: "project.rename.response",
+        payload: {
+          requestId,
+          projectId,
+          accepted: true,
+          customName: nextCustomName,
+          error: null,
+        },
+      });
+
+      // Re-emit descriptors for every workspace under this project so the new
+      // resolved name lands in the UI immediately.
+      const workspaces = await this.workspaceRegistry.list();
+      const affectedWorkspaceIds = workspaces
+        .filter((workspace) => workspace.projectId === projectId)
+        .map((workspace) => workspace.workspaceId);
+      if (affectedWorkspaceIds.length > 0) {
+        await this.emitWorkspaceUpdatesForWorkspaceIds(affectedWorkspaceIds, {
+          skipReconcile: true,
+        });
+      }
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, projectId, requestId },
+        "session: project.rename.request error",
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to rename project: ${getErrorMessage(error)}`,
+        },
+      });
+      this.emit({
+        type: "project.rename.response",
+        payload: {
+          requestId,
+          projectId,
+          accepted: false,
+          customName: null,
+          error: getErrorMessageOr(error, "Failed to rename project"),
         },
       });
     }
@@ -5173,16 +5285,17 @@ export class Session {
     const { cwd, requestId } = msg;
 
     try {
-      const snapshot = await this.workspaceGitService.getSnapshot(cwd);
-      const prNumber = snapshot.github.pullRequest?.number;
-      if (typeof prNumber !== "number") {
-        throw new Error("Unable to determine GitHub pull request number for merge");
-      }
-
+      const pullRequest = await this.resolveCurrentPullRequest(cwd, "merge", {
+        force: true,
+        includeGitHub: true,
+        reason: "merge-pr-validation",
+      });
+      this.assertCurrentPullRequestHasGithubMergeFacts(pullRequest);
       await this.github.mergePullRequest({
         cwd,
-        prNumber,
+        prNumber: pullRequest.number,
         mergeMethod: msg.mergeMethod,
+        status: pullRequest,
       });
       await this.notifyGitMutation(cwd, "merge-pr", { invalidateGithub: true });
 
@@ -5206,6 +5319,96 @@ export class Session {
         },
       });
     }
+  }
+
+  private assertCurrentPullRequestHasGithubMergeFacts(
+    pullRequest: CurrentWorkspacePullRequest,
+  ): void {
+    if (!pullRequest.github) {
+      throw new Error("GitHub merge facts are unavailable for this pull request");
+    }
+  }
+
+  private async handleCheckoutGithubSetAutoMergeRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout.github.set_auto_merge.request" }>,
+  ): Promise<void> {
+    const { cwd, requestId } = msg;
+
+    try {
+      const pullRequest = await this.resolveCurrentPullRequest(cwd, "auto-merge", {
+        force: true,
+        includeGitHub: true,
+        reason: "auto-merge-validation",
+      });
+      if (msg.enabled) {
+        const mergeMethod = msg.mergeMethod;
+        if (!mergeMethod) {
+          throw new Error("mergeMethod is required when enabling auto-merge");
+        }
+        assertPullRequestAutoMergeEnableReady({
+          mergeMethod,
+          status: pullRequest,
+        });
+        await this.github.enablePullRequestAutoMerge({
+          cwd,
+          prNumber: pullRequest.number,
+          mergeMethod,
+          status: pullRequest,
+        });
+      } else {
+        if (msg.mergeMethod) {
+          throw new Error("mergeMethod is not allowed when disabling auto-merge");
+        }
+        assertPullRequestAutoMergeDisableReady({ status: pullRequest });
+        await this.github.disablePullRequestAutoMerge({
+          cwd,
+          prNumber: pullRequest.number,
+          status: pullRequest,
+        });
+      }
+      await this.notifyGitMutation(
+        cwd,
+        msg.enabled ? "enable-pr-auto-merge" : "disable-pr-auto-merge",
+        {
+          invalidateGithub: true,
+        },
+      );
+
+      this.emit({
+        type: "checkout.github.set_auto_merge.response",
+        payload: {
+          cwd,
+          enabled: msg.enabled,
+          success: true,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "checkout.github.set_auto_merge.response",
+        payload: {
+          cwd,
+          enabled: msg.enabled,
+          success: false,
+          error: toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async resolveCurrentPullRequest(
+    cwd: string,
+    operation: "merge" | "auto-merge",
+    options?: WorkspaceGitSnapshotOptions,
+  ): Promise<CurrentWorkspacePullRequest> {
+    const snapshot = await this.workspaceGitService.getSnapshot(cwd, options);
+    const pullRequest = snapshot.github.pullRequest;
+    if (!pullRequest || typeof pullRequest.number !== "number") {
+      throw new Error(`Unable to determine GitHub pull request number for ${operation}`);
+    }
+    return { ...pullRequest, number: pullRequest.number };
   }
 
   private async handleCheckoutPrStatusRequest(
@@ -5897,7 +6100,10 @@ export class Session {
     return {
       id: workspace.workspaceId,
       projectId: workspace.projectId,
-      projectDisplayName: resolvedProjectRecord?.displayName ?? workspace.projectId,
+      projectDisplayName: resolvedProjectRecord
+        ? resolveProjectDisplayName(resolvedProjectRecord)
+        : workspace.projectId,
+      projectCustomName: resolvedProjectRecord?.customName ?? null,
       projectRootPath: resolvedProjectRecord?.rootPath ?? workspace.cwd,
       workspaceDirectory: workspace.cwd,
       projectKind: (resolvedProjectRecord?.kind ?? "directory") === "git" ? "git" : "non_git",
@@ -5985,7 +6191,10 @@ export class Session {
     return {
       id: result.workspace.workspaceId,
       projectId: result.workspace.projectId,
-      projectDisplayName: projectRecord?.displayName ?? result.workspace.projectId,
+      projectDisplayName: projectRecord
+        ? resolveProjectDisplayName(projectRecord)
+        : result.workspace.projectId,
+      projectCustomName: projectRecord?.customName ?? null,
       projectRootPath: projectRecord?.rootPath ?? result.repoRoot,
       workspaceDirectory: result.workspace.cwd,
       projectKind: "git",
