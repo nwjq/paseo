@@ -20,9 +20,9 @@ export interface AutoArchiveArchiveOptions {
   daemonConfigStore: DaemonConfigStore;
   workspaceGitService: WorkspaceGitServiceImpl;
   github: GitHubService;
+  workspaceRegistry: Pick<WorkspaceRegistry, "list">;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
-  workspaceRegistry: Pick<WorkspaceRegistry, "list">;
   terminalManager: TerminalManager;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
