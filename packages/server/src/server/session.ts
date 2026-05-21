@@ -20,6 +20,7 @@ import {
   type FileExplorerRequest,
   type FileDownloadTokenRequest,
   type GitSetupOptions,
+  type CheckoutRenameBranchRequest,
   type StartWorkspaceScriptRequest,
   type CloseItemsRequest,
   type SubscribeCheckoutDiffRequest,
@@ -47,6 +48,8 @@ import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js"
 import { maybePersistTtsDebugAudio } from "./agent/tts-debug.js";
 import { isPaseoDictationDebugEnabled } from "./agent/recordings-debug.js";
 import { listAvailableEditorTargets, openInEditorTarget } from "./editor-targets.js";
+import { getPidLockInfo } from "./pid-lock.js";
+import { generateLocalPairingOffer } from "./pairing-offer.js";
 import {
   DictationStreamManager,
   type DictationStreamOutboundMessage,
@@ -82,7 +85,11 @@ import type { DaemonConfigStore } from "./daemon-config-store.js";
 import { applyMutableProviderConfigToOverrides } from "./daemon-config-store.js";
 import { getErrorMessage, getErrorMessageOr } from "../shared/error-utils.js";
 import { getAgentStatusPriority } from "../shared/agent-state-bucket.js";
-import type { WorkspaceGitRuntimeSnapshot, WorkspaceGitService } from "./workspace-git-service.js";
+import type {
+  WorkspaceGitRuntimeSnapshot,
+  WorkspaceGitService,
+  WorkspaceGitSnapshotOptions,
+} from "./workspace-git-service.js";
 
 import { buildProviderRegistry } from "./agent/provider-registry.js";
 import type {
@@ -92,6 +99,7 @@ import type {
 import { AgentManager } from "./agent/agent-manager.js";
 import { ProviderSnapshotManager, resolveSnapshotCwd } from "./agent/provider-snapshot-manager.js";
 import type {
+  AgentManagerEvent,
   AgentTimelineCursor,
   AgentTimelineFetchDirection,
   ManagedAgent,
@@ -149,6 +157,7 @@ import {
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
+  resolveProjectDisplayName,
   type PersistedProjectRecord,
   type PersistedWorkspaceRecord,
   type ProjectRegistry,
@@ -186,7 +195,9 @@ import {
   pullCurrentBranch,
   pushCurrentBranch,
   createPullRequest,
+  renameCurrentBranch,
 } from "../utils/checkout-git.js";
+import { validateBranchSlug } from "../utils/branch-slug.js";
 import { getProjectIcon } from "../utils/project-icon.js";
 import { expandTilde } from "../utils/path.js";
 import { searchHomeDirectories, searchWorkspaceEntries } from "../utils/directory-suggestions.js";
@@ -211,6 +222,8 @@ import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
 import { execCommand } from "../utils/spawn.js";
 import {
+  assertPullRequestAutoMergeDisableReady,
+  assertPullRequestAutoMergeEnableReady,
   createGitHubService,
   type GitHubService,
   type PullRequestTimelineItem,
@@ -239,8 +252,15 @@ import {
   handleWorkspaceSetupStatusRequest as handleWorkspaceSetupStatusRequestMessage,
 } from "./worktree-session.js";
 import { toWorktreeWireError } from "./worktree-errors.js";
+import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
 
 const WORKSPACE_GIT_WATCH_REMOVED_STATE_KEY = "__removed__";
+
+type CurrentWorkspacePullRequest = NonNullable<
+  WorkspaceGitRuntimeSnapshot["github"]["pullRequest"]
+> & {
+  number: number;
+};
 
 interface ResolveKnownProjectRootForConfigInput {
   repoRoot: string;
@@ -288,10 +308,12 @@ type GitMutationRefreshReason =
   | "merge-to-base"
   | "merge-from-base"
   | "merge-pr"
+  | "enable-pr-auto-merge"
+  | "disable-pr-auto-merge"
   | "create-pr"
   | "switch-branch"
-  | "create-branch"
   | "rename-branch"
+  | "create-branch"
   | "stash-push"
   | "stash-pop"
   | "create-worktree";
@@ -413,6 +435,7 @@ type ProcessingPhase = "idle" | "transcribing";
 
 interface WorkspaceGitWatchTarget {
   cwd: string;
+  workspaceId: string;
   watchers: FSWatcher[];
   debounceTimer: ReturnType<typeof setTimeout> | null;
   refreshPromise: Promise<void> | null;
@@ -579,6 +602,18 @@ export interface SessionOptions {
   agentProviderRuntimeSettings?: AgentProviderRuntimeSettingsMap;
   providerOverrides?: Record<string, ProviderOverride>;
   isDev?: boolean;
+  serverId?: string;
+  daemonVersion?: string;
+  daemonRuntimeConfig?: {
+    listen: string | null;
+    relay: {
+      enabled: boolean;
+      endpoint: string;
+      publicEndpoint: string;
+      useTls: boolean;
+      publicUseTls: boolean;
+    } | null;
+  };
 }
 
 export type SessionLifecycleIntent =
@@ -789,6 +824,10 @@ export class Session {
   private readonly agentProviderRuntimeSettings: AgentProviderRuntimeSettingsMap | undefined;
   private readonly providerOverrides: Record<string, ProviderOverride> | undefined;
   private readonly isDev: boolean;
+  private readonly serverId: string | undefined;
+  private readonly daemonVersion: string | undefined;
+  private readonly daemonRuntimeConfig: SessionOptions["daemonRuntimeConfig"];
+  private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
   private voiceModeAgentId: string | null = null;
   private voiceModeBaseConfig: VoiceModeBaseConfig | null = null;
 
@@ -834,6 +873,9 @@ export class Session {
       agentProviderRuntimeSettings,
       providerOverrides,
       isDev,
+      serverId,
+      daemonVersion,
+      daemonRuntimeConfig,
     } = options;
     this.clientId = clientId;
     this.appVersion = appVersion ?? null;
@@ -871,6 +913,36 @@ export class Session {
       isPathWithinRoot: (rootPath, candidatePath) => this.isPathWithinRoot(rootPath, candidatePath),
       sessionLogger: this.sessionLogger,
     });
+    this.createAgentLifecycleDispatch = new CreateAgentLifecycleDispatch({
+      paseoHome: this.paseoHome,
+      agentManager: this.agentManager,
+      agentStorage: this.agentStorage,
+      github: this.github,
+      workspaceGitService: this.workspaceGitService,
+      workspaceRegistry: this.workspaceRegistry,
+      createPaseoWorktreeWorkflow: (input, workflowOptions) =>
+        this.createPaseoWorktreeWorkflow(input, workflowOptions),
+      archiveAgentForClose: (agentId) => this.archiveAgentForClose(agentId),
+      archiveWorkspaceRecord: (workspaceId) => this.archiveWorkspaceRecord(workspaceId),
+      emit: (message) => this.emit(message),
+      emitAgentRemove: (agentId) => {
+        if (this.agentUpdatesSubscription) {
+          this.bufferOrEmitAgentUpdate(this.agentUpdatesSubscription, {
+            kind: "remove",
+            agentId,
+          });
+        }
+      },
+      emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds) =>
+        this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds),
+      markWorkspaceArchiving: (workspaceIds, archivingAt) =>
+        this.markWorkspaceArchiving(workspaceIds, archivingAt),
+      clearWorkspaceArchiving: (workspaceIds) => this.clearWorkspaceArchiving(workspaceIds),
+      isPathWithinRoot: (rootPath, candidatePath) => this.isPathWithinRoot(rootPath, candidatePath),
+      killTerminalsUnderPath: (rootPath) =>
+        this.terminalController.killTerminalsUnderPath(rootPath),
+      logger: this.sessionLogger,
+    });
     this.providerSnapshotManager = providerSnapshotManager ?? null;
     this.scriptRouteStore = scriptRouteStore ?? null;
     this.scriptRuntimeStore = scriptRuntimeStore ?? null;
@@ -885,6 +957,9 @@ export class Session {
     this.agentProviderRuntimeSettings = agentProviderRuntimeSettings;
     this.providerOverrides = providerOverrides;
     this.isDev = isDev === true;
+    this.serverId = serverId;
+    this.daemonVersion = daemonVersion;
+    this.daemonRuntimeConfig = daemonRuntimeConfig;
     this.abortController = new AbortController();
     this.workspaceDirectory = new WorkspaceDirectory({
       logger: this.sessionLogger,
@@ -1262,20 +1337,8 @@ export class Session {
         // Reduce bandwidth/CPU on mobile: only forward high-frequency agent stream events
         // for the focused agent, with a short grace window while backgrounded.
         // History catch-up is handled via pull-based `fetch_agent_timeline_request`.
-        const activity = this.clientActivity;
-        if (activity?.deviceType === "mobile") {
-          if (!activity.focusedAgentId) {
-            return;
-          }
-          if (activity.focusedAgentId !== event.agentId) {
-            return;
-          }
-          if (!activity.appVisible) {
-            const hiddenForMs = Date.now() - activity.appVisibilityChangedAt.getTime();
-            if (hiddenForMs >= this.MOBILE_BACKGROUND_STREAM_GRACE_MS) {
-              return;
-            }
-          }
+        if (this.shouldSkipAgentStreamForward(event.agentId)) {
+          return;
         }
 
         const serializedEvent = serializeAgentStreamEvent(event.event);
@@ -1294,17 +1357,9 @@ export class Session {
           "agent.session.forward_stream",
         );
 
-        const payload = {
-          agentId: event.agentId,
-          event: serializedEvent,
-          timestamp: new Date().toISOString(),
-          ...(typeof event.seq === "number" ? { seq: event.seq } : {}),
-          ...(typeof event.epoch === "string" ? { epoch: event.epoch } : {}),
-        } as const;
-
         this.emit({
           type: "agent_stream",
-          payload,
+          payload: this.buildAgentStreamPayload(event, serializedEvent),
         });
 
         if (event.event.type === "permission_requested") {
@@ -1330,6 +1385,34 @@ export class Session {
       },
       { replayState: false },
     );
+  }
+
+  private shouldSkipAgentStreamForward(agentId: string): boolean {
+    const activity = this.clientActivity;
+    if (activity?.deviceType !== "mobile") {
+      return false;
+    }
+    if (!activity.focusedAgentId || activity.focusedAgentId !== agentId) {
+      return true;
+    }
+    if (activity.appVisible) {
+      return false;
+    }
+    const hiddenForMs = Date.now() - activity.appVisibilityChangedAt.getTime();
+    return hiddenForMs >= this.MOBILE_BACKGROUND_STREAM_GRACE_MS;
+  }
+
+  private buildAgentStreamPayload(
+    event: Extract<AgentManagerEvent, { type: "agent_stream" }>,
+    serializedEvent: Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"]["event"],
+  ): Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"] {
+    return {
+      agentId: event.agentId,
+      event: serializedEvent,
+      timestamp: event.timestamp ?? new Date().toISOString(),
+      ...(typeof event.seq === "number" ? { seq: event.seq } : {}),
+      ...(typeof event.epoch === "string" ? { epoch: event.epoch } : {}),
+    };
   }
 
   private async buildAgentPayload(agent: ManagedAgent): Promise<AgentSnapshotPayload> {
@@ -1555,7 +1638,7 @@ export class Session {
     const checkout = buildWorkspaceCheckout(workspace, project);
     return {
       projectKey: project.projectId,
-      projectName: project.displayName,
+      projectName: resolveProjectDisplayName(project),
       checkout,
     };
   }
@@ -1785,6 +1868,8 @@ export class Session {
         return this.handleCloseItemsRequest(msg);
       case "update_agent_request":
         return this.handleUpdateAgentRequest(msg.agentId, msg.name, msg.labels, msg.requestId);
+      case "project.rename.request":
+        return this.handleProjectRenameRequest(msg.projectId, msg.customName, msg.requestId);
       case "send_agent_message_request":
         return this.handleSendAgentMessageRequest(msg);
       case "wait_for_finish_request":
@@ -1831,6 +1916,10 @@ export class Session {
           payload: { requestId: msg.requestId, config: this.daemonConfigStore.get() },
         });
         return undefined;
+      case "daemon.get_status.request":
+        return this.handleDaemonGetStatusRequest(msg);
+      case "daemon.get_pairing_offer.request":
+        return this.handleDaemonGetPairingOfferRequest(msg);
       case "set_daemon_config_request":
         this.emit({
           type: "set_daemon_config_response",
@@ -1986,12 +2075,8 @@ export class Session {
         return undefined;
       case "checkout_switch_branch_request":
         return this.handleCheckoutSwitchBranchRequest(msg);
-      case "stash_save_request":
-        return this.handleStashSaveRequest(msg);
-      case "stash_pop_request":
-        return this.handleStashPopRequest(msg);
-      case "stash_list_request":
-        return this.handleStashListRequest(msg);
+      case "checkout.rename_branch.request":
+        return this.handleCheckoutRenameBranchRequest(msg);
       case "checkout_commit_request":
         return this.handleCheckoutCommitRequest(msg);
       case "checkout_merge_request":
@@ -2006,12 +2091,20 @@ export class Session {
         return this.handleCheckoutPrCreateRequest(msg);
       case "checkout_pr_merge_request":
         return this.handleCheckoutPrMergeRequest(msg);
+      case "checkout.github.set_auto_merge.request":
+        return this.handleCheckoutGithubSetAutoMergeRequest(msg);
       case "checkout_pr_status_request":
         return this.handleCheckoutPrStatusRequest(msg);
       case "pull_request_timeline_request":
         return this.handlePullRequestTimelineRequest(msg);
       case "github_search_request":
         return this.handleGitHubSearchRequest(msg);
+      case "stash_save_request":
+        return this.handleStashSaveRequest(msg);
+      case "stash_pop_request":
+        return this.handleStashPopRequest(msg);
+      case "stash_list_request":
+        return this.handleStashListRequest(msg);
       default:
         return undefined;
     }
@@ -2467,6 +2560,90 @@ export class Session {
           agentId,
           accepted: false,
           error: getErrorMessageOr(error, "Failed to update agent"),
+        },
+      });
+    }
+  }
+
+  private async handleProjectRenameRequest(
+    projectId: string,
+    customName: string | null,
+    requestId: string,
+  ): Promise<void> {
+    this.sessionLogger.info(
+      { projectId, requestId, hasCustomName: typeof customName === "string" },
+      "session: project.rename.request",
+    );
+
+    try {
+      const existing = await this.projectRegistry.get(projectId);
+      if (!existing) {
+        this.emit({
+          type: "project.rename.response",
+          payload: {
+            requestId,
+            projectId,
+            accepted: false,
+            customName: null,
+            error: "Project not found",
+          },
+        });
+        return;
+      }
+
+      const trimmed = customName?.trim() ?? "";
+      const nextCustomName = trimmed.length === 0 ? null : trimmed;
+
+      await this.projectRegistry.upsert({
+        ...existing,
+        customName: nextCustomName,
+        updatedAt: new Date().toISOString(),
+      });
+
+      this.emit({
+        type: "project.rename.response",
+        payload: {
+          requestId,
+          projectId,
+          accepted: true,
+          customName: nextCustomName,
+          error: null,
+        },
+      });
+
+      // Re-emit descriptors for every workspace under this project so the new
+      // resolved name lands in the UI immediately.
+      const workspaces = await this.workspaceRegistry.list();
+      const affectedWorkspaceIds = workspaces
+        .filter((workspace) => workspace.projectId === projectId)
+        .map((workspace) => workspace.workspaceId);
+      if (affectedWorkspaceIds.length > 0) {
+        await this.emitWorkspaceUpdatesForWorkspaceIds(affectedWorkspaceIds, {
+          skipReconcile: true,
+        });
+      }
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, projectId, requestId },
+        "session: project.rename.request error",
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to rename project: ${getErrorMessage(error)}`,
+        },
+      });
+      this.emit({
+        type: "project.rename.response",
+        payload: {
+          requestId,
+          projectId,
+          accepted: false,
+          customName: null,
+          error: getErrorMessageOr(error, "Failed to rename project"),
         },
       });
     }
@@ -2929,9 +3106,12 @@ export class Session {
       clientMessageId,
       outputSchema,
       git,
+      worktree,
+      autoArchive,
       images,
       attachments,
       labels,
+      env,
     } = msg;
     this.sessionLogger.info(
       { cwd: config.cwd, provider: config.provider, worktreeName },
@@ -2940,6 +3120,8 @@ export class Session {
       }`,
     );
 
+    let createdWorktreeForCleanup: CreatePaseoWorktreeWorkflowResult | null = null;
+    let createdAgentId: string | null = null;
     try {
       const trimmedPrompt = initialPrompt?.trim();
       const { explicitTitle, provisionalTitle } = resolveCreateAgentTitles({
@@ -2955,8 +3137,18 @@ export class Session {
         ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
       };
+      const createdWorktree = await this.createAgentLifecycleDispatch.createWorktreeForRequest({
+        cwd: config.cwd,
+        target: worktree,
+        firstAgentContext,
+        hasLegacyGitOptions: Boolean(git),
+      });
+      createdWorktreeForCleanup = createdWorktree;
+      const createAgentConfig: AgentSessionConfig = createdWorktree
+        ? { ...resolvedConfig, cwd: createdWorktree.worktree.worktreePath }
+        : resolvedConfig;
       const { sessionConfig, setupContinuation } = await this.buildAgentSessionConfig(
-        resolvedConfig,
+        createAgentConfig,
         git,
         worktreeName,
         firstAgentContext,
@@ -2972,8 +3164,15 @@ export class Session {
         labels,
         workspaceId: resolvedWorkspace.workspaceId,
         initialPrompt: trimmedPrompt,
+        env,
       });
+      createdAgentId = snapshot.id;
       await this.forwardAgentUpdate(snapshot);
+      this.createAgentLifecycleDispatch.registerAutoArchiveIfRequested({
+        autoArchive,
+        agentId: snapshot.id,
+        createdWorktree,
+      });
 
       await this.sendInitialCreateAgentPrompt({
         snapshot,
@@ -3007,6 +3206,10 @@ export class Session {
         `Created agent ${snapshot.id} (${snapshot.provider})`,
       );
     } catch (error) {
+      await this.createAgentLifecycleDispatch.cleanupCreatedWorktreeAfterFailedAgentCreate({
+        createdWorktree: createdWorktreeForCleanup,
+        createdAgentId,
+      });
       const wireError = toWorktreeWireError(error);
       this.sessionLogger.error({ err: error }, "Failed to create agent");
       if (requestId) {
@@ -3689,6 +3892,86 @@ export class Session {
           error: getErrorMessage(error),
           fetchedAt,
           requestId: msg.requestId,
+        },
+      });
+    }
+  }
+
+  private async handleDaemonGetStatusRequest(
+    msg: Extract<SessionInboundMessage, { type: "daemon.get_status.request" }>,
+  ): Promise<void> {
+    try {
+      const pidInfo = await getPidLockInfo(this.paseoHome);
+      const providers = (await this.agentManager.listProviderAvailability()).map((p) => ({
+        provider: p.provider,
+        available: p.available,
+        error: p.error ?? null,
+      }));
+      this.emit({
+        type: "daemon.get_status.response",
+        payload: {
+          requestId: msg.requestId,
+          serverId: this.serverId ?? "",
+          version: this.daemonVersion ?? null,
+          pid: process.pid,
+          nodePath: process.execPath,
+          startedAt: pidInfo?.startedAt ?? null,
+          listen: this.daemonRuntimeConfig?.listen ?? null,
+          relay: this.daemonRuntimeConfig?.relay ?? null,
+          providers,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.error({ err: error }, "Failed to handle daemon status request");
+      this.emit({
+        type: "daemon.get_status.response",
+        payload: {
+          requestId: msg.requestId,
+          serverId: this.serverId ?? "",
+          version: this.daemonVersion ?? null,
+          pid: process.pid,
+          nodePath: process.execPath,
+          startedAt: null,
+          listen: null,
+          relay: null,
+          providers: [],
+        },
+      });
+    }
+  }
+
+  private async handleDaemonGetPairingOfferRequest(
+    msg: Extract<SessionInboundMessage, { type: "daemon.get_pairing_offer.request" }>,
+  ): Promise<void> {
+    try {
+      const relay = this.daemonRuntimeConfig?.relay;
+      const pairing = await generateLocalPairingOffer({
+        paseoHome: this.paseoHome,
+        relayEnabled: relay?.enabled ?? true,
+        relayEndpoint: relay?.endpoint,
+        relayPublicEndpoint: relay?.publicEndpoint,
+        relayUseTls: relay?.useTls,
+        relayPublicUseTls: relay?.publicUseTls,
+        includeQr: true,
+        logger: this.sessionLogger,
+      });
+      this.emit({
+        type: "daemon.get_pairing_offer.response",
+        payload: {
+          requestId: msg.requestId,
+          url: pairing.url ?? "",
+          qr: pairing.qr ?? null,
+          relayEnabled: pairing.relayEnabled,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.error({ err: error }, "Failed to handle daemon pairing offer request");
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: "daemon.get_pairing_offer.request",
+          error: error instanceof Error ? error.message : String(error),
         },
       });
     }
@@ -4586,7 +4869,7 @@ export class Session {
   }
 
   private async handleDirectorySuggestionsRequest(msg: DirectorySuggestionsRequest): Promise<void> {
-    const { query, limit, requestId, cwd, includeFiles, includeDirectories } = msg;
+    const { query, limit, requestId, cwd, includeFiles, includeDirectories, matchMode } = msg;
 
     try {
       const workspaceCwd = cwd?.trim();
@@ -4597,6 +4880,7 @@ export class Session {
             limit,
             includeFiles,
             includeDirectories,
+            matchMode,
           })
         : (
             await searchHomeDirectories({
@@ -4706,16 +4990,35 @@ export class Session {
     target.lastBranchName = workspace?.name ?? null;
   }
 
+  private handleWorkspaceGitBranchSnapshot(cwd: string, branchName: string | null): void {
+    const target = this.workspaceGitWatchTargets.get(normalizePersistedWorkspaceId(cwd));
+    if (!target) {
+      return;
+    }
+
+    const previousBranchName = target.lastBranchName;
+    if (branchName === previousBranchName) {
+      return;
+    }
+
+    target.lastBranchName = branchName;
+    this.onBranchChanged?.(target.workspaceId, previousBranchName, branchName);
+  }
+
   private syncWorkspaceGitObservers(workspaces: Iterable<WorkspaceDescriptorPayload>): void {
     for (const workspace of workspaces) {
       this.syncWorkspaceGitObserver(workspace.workspaceDirectory, {
         isGit: workspace.projectKind === "git",
+        workspaceId: workspace.id,
       });
       this.rememberWorkspaceGitDescriptorState(workspace.workspaceDirectory, workspace);
     }
   }
 
-  private syncWorkspaceGitObserver(cwd: string, options: { isGit: boolean }): void {
+  private syncWorkspaceGitObserver(
+    cwd: string,
+    options: { isGit: boolean; workspaceId: string },
+  ): void {
     const normalizedCwd = normalizePersistedWorkspaceId(cwd);
     if (!options.isGit) {
       this.removeWorkspaceGitSubscription(normalizedCwd);
@@ -4726,9 +5029,22 @@ export class Session {
       return;
     }
 
+    const target: WorkspaceGitWatchTarget = {
+      cwd: normalizedCwd,
+      workspaceId: options.workspaceId,
+      watchers: [],
+      debounceTimer: null,
+      refreshPromise: null,
+      refreshQueued: false,
+      latestDescriptorStateKey: null,
+      lastBranchName: null,
+    };
+    this.workspaceGitWatchTargets.set(normalizedCwd, target);
+
     const subscription = this.workspaceGitService.registerWorkspace(
       { cwd: normalizedCwd },
       (snapshot) => {
+        this.handleWorkspaceGitBranchSnapshot(normalizedCwd, snapshot.git.currentBranch ?? null);
         void this.emitWorkspaceUpdateForCwd(normalizedCwd);
         this.emitCheckoutStatusUpdate(normalizedCwd, snapshot);
       },
@@ -4828,6 +5144,58 @@ export class Session {
           cwd,
           success: false,
           branch,
+          error: toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async handleCheckoutRenameBranchRequest(msg: CheckoutRenameBranchRequest): Promise<void> {
+    const { cwd, branch, requestId } = msg;
+    const validation = validateBranchSlug(branch);
+
+    if (!validation.valid) {
+      this.emit({
+        type: "checkout.rename_branch.response",
+        payload: {
+          cwd,
+          success: false,
+          currentBranch: null,
+          error: toCheckoutError(new Error(validation.error ?? "Invalid branch name")),
+          requestId,
+        },
+      });
+      return;
+    }
+
+    try {
+      const result = await renameCurrentBranch(cwd, branch);
+      await this.notifyGitMutation(cwd, "rename-branch", { invalidateGithub: true });
+      this.checkoutDiffManager.scheduleRefreshForCwd(cwd);
+      this.handleWorkspaceGitBranchSnapshot(cwd, result.currentBranch);
+
+      // Push a workspace_update immediately so the sidebar/header reflect
+      // the new branch name without waiting for the background git watcher.
+      await this.emitWorkspaceUpdateForCwd(cwd);
+
+      this.emit({
+        type: "checkout.rename_branch.response",
+        payload: {
+          cwd,
+          success: true,
+          currentBranch: result.currentBranch,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "checkout.rename_branch.response",
+        payload: {
+          cwd,
+          success: false,
+          currentBranch: null,
           error: toCheckoutError(error),
           requestId,
         },
@@ -5173,16 +5541,17 @@ export class Session {
     const { cwd, requestId } = msg;
 
     try {
-      const snapshot = await this.workspaceGitService.getSnapshot(cwd);
-      const prNumber = snapshot.github.pullRequest?.number;
-      if (typeof prNumber !== "number") {
-        throw new Error("Unable to determine GitHub pull request number for merge");
-      }
-
+      const pullRequest = await this.resolveCurrentPullRequest(cwd, "merge", {
+        force: true,
+        includeGitHub: true,
+        reason: "merge-pr-validation",
+      });
+      this.assertCurrentPullRequestHasGithubMergeFacts(pullRequest);
       await this.github.mergePullRequest({
         cwd,
-        prNumber,
+        prNumber: pullRequest.number,
         mergeMethod: msg.mergeMethod,
+        status: pullRequest,
       });
       await this.notifyGitMutation(cwd, "merge-pr", { invalidateGithub: true });
 
@@ -5206,6 +5575,96 @@ export class Session {
         },
       });
     }
+  }
+
+  private assertCurrentPullRequestHasGithubMergeFacts(
+    pullRequest: CurrentWorkspacePullRequest,
+  ): void {
+    if (!pullRequest.github) {
+      throw new Error("GitHub merge facts are unavailable for this pull request");
+    }
+  }
+
+  private async handleCheckoutGithubSetAutoMergeRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout.github.set_auto_merge.request" }>,
+  ): Promise<void> {
+    const { cwd, requestId } = msg;
+
+    try {
+      const pullRequest = await this.resolveCurrentPullRequest(cwd, "auto-merge", {
+        force: true,
+        includeGitHub: true,
+        reason: "auto-merge-validation",
+      });
+      if (msg.enabled) {
+        const mergeMethod = msg.mergeMethod;
+        if (!mergeMethod) {
+          throw new Error("mergeMethod is required when enabling auto-merge");
+        }
+        assertPullRequestAutoMergeEnableReady({
+          mergeMethod,
+          status: pullRequest,
+        });
+        await this.github.enablePullRequestAutoMerge({
+          cwd,
+          prNumber: pullRequest.number,
+          mergeMethod,
+          status: pullRequest,
+        });
+      } else {
+        if (msg.mergeMethod) {
+          throw new Error("mergeMethod is not allowed when disabling auto-merge");
+        }
+        assertPullRequestAutoMergeDisableReady({ status: pullRequest });
+        await this.github.disablePullRequestAutoMerge({
+          cwd,
+          prNumber: pullRequest.number,
+          status: pullRequest,
+        });
+      }
+      await this.notifyGitMutation(
+        cwd,
+        msg.enabled ? "enable-pr-auto-merge" : "disable-pr-auto-merge",
+        {
+          invalidateGithub: true,
+        },
+      );
+
+      this.emit({
+        type: "checkout.github.set_auto_merge.response",
+        payload: {
+          cwd,
+          enabled: msg.enabled,
+          success: true,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "checkout.github.set_auto_merge.response",
+        payload: {
+          cwd,
+          enabled: msg.enabled,
+          success: false,
+          error: toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
+  private async resolveCurrentPullRequest(
+    cwd: string,
+    operation: "merge" | "auto-merge",
+    options?: WorkspaceGitSnapshotOptions,
+  ): Promise<CurrentWorkspacePullRequest> {
+    const snapshot = await this.workspaceGitService.getSnapshot(cwd, options);
+    const pullRequest = snapshot.github.pullRequest;
+    if (!pullRequest || typeof pullRequest.number !== "number") {
+      throw new Error(`Unable to determine GitHub pull request number for ${operation}`);
+    }
+    return { ...pullRequest, number: pullRequest.number };
   }
 
   private async handleCheckoutPrStatusRequest(
@@ -5897,7 +6356,10 @@ export class Session {
     return {
       id: workspace.workspaceId,
       projectId: workspace.projectId,
-      projectDisplayName: resolvedProjectRecord?.displayName ?? workspace.projectId,
+      projectDisplayName: resolvedProjectRecord
+        ? resolveProjectDisplayName(resolvedProjectRecord)
+        : workspace.projectId,
+      projectCustomName: resolvedProjectRecord?.customName ?? null,
       projectRootPath: resolvedProjectRecord?.rootPath ?? workspace.cwd,
       workspaceDirectory: workspace.cwd,
       projectKind: (resolvedProjectRecord?.kind ?? "directory") === "git" ? "git" : "non_git",
@@ -5985,7 +6447,10 @@ export class Session {
     return {
       id: result.workspace.workspaceId,
       projectId: result.workspace.projectId,
-      projectDisplayName: projectRecord?.displayName ?? result.workspace.projectId,
+      projectDisplayName: projectRecord
+        ? resolveProjectDisplayName(projectRecord)
+        : result.workspace.projectId,
+      projectCustomName: projectRecord?.customName ?? null,
       projectRootPath: projectRecord?.rootPath ?? result.repoRoot,
       workspaceDirectory: result.workspace.cwd,
       projectKind: "git",
@@ -6487,7 +6952,10 @@ export class Session {
 
   private async emitWorkspaceUpdateForCwd(
     cwd: string,
-    options?: { skipReconcile?: boolean; dedupeGitState?: boolean },
+    options?: {
+      skipReconcile?: boolean;
+      dedupeGitState?: boolean;
+    },
   ): Promise<void> {
     const workspaces = await this.workspaceRegistry.list();
     const workspaceId = this.resolveRegisteredWorkspaceIdForCwd(cwd, workspaces);

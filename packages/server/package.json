@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/server",
-  "version": "0.1.75",
+  "version": "0.1.79-beta.1",
   "description": "Paseo backend server",
   "files": [
     "dist/server",
@@ -22,6 +22,11 @@
       "types": "./dist/server/utils/tool-call-parsers.d.ts",
       "source": "./src/utils/tool-call-parsers.ts",
       "default": "./dist/server/utils/tool-call-parsers.js"
+    },
+    "./utils/branch-slug": {
+      "types": "./dist/server/utils/branch-slug.d.ts",
+      "source": "./src/utils/branch-slug.ts",
+      "default": "./dist/server/utils/branch-slug.js"
     }
   },
   "publishConfig": {
@@ -43,14 +48,14 @@
     "speech:transcribe:local": "tsx scripts/transcribe-local-wav.ts",
     "test": "npm run test:unit && npm run test:integration",
     "test:unit": "vitest run --exclude \"**/*.e2e.test.ts\"",
-    "test:integration": "vitest run --maxWorkers=1 --minWorkers=1 src/server/daemon-e2e/models.e2e.test.ts src/server/daemon-e2e/live-preferences.e2e.test.ts src/server/agent/model-catalog.e2e.test.ts",
+    "test:integration": "vitest run --maxWorkers=1 src/server/daemon-e2e/models.e2e.test.ts src/server/daemon-e2e/live-preferences.e2e.test.ts src/server/agent/model-catalog.e2e.test.ts",
     "test:integration:all": "npm run test:e2e",
     "test:integration:real": "vitest run real.e2e.test.ts",
     "test:integration:local": "vitest run local.e2e.test.ts",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
-    "test:e2e": "vitest run e2e.test.ts --maxWorkers=1 --minWorkers=1 --exclude \"**/*.real.e2e.test.ts\" --exclude \"**/*.local.e2e.test.ts\"",
-    "test:e2e:all": "vitest run e2e.test.ts --maxWorkers=1 --minWorkers=1",
+    "test:e2e": "vitest run e2e.test.ts --maxWorkers=1 --exclude \"**/*.real.e2e.test.ts\" --exclude \"**/*.local.e2e.test.ts\"",
+    "test:e2e:all": "vitest run e2e.test.ts --maxWorkers=1",
     "test:e2e:real": "npm run test:integration:real",
     "test:e2e:local": "npm run test:integration:local",
     "test:e2e:ui": "vitest --ui e2e.test.ts"
@@ -58,12 +63,9 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.17.1",
     "@anthropic-ai/claude-agent-sdk": "^0.2.133",
-    "@getpaseo/highlight": "0.1.75",
-    "@getpaseo/relay": "0.1.75",
+    "@getpaseo/highlight": "0.1.79-beta.1",
+    "@getpaseo/relay": "0.1.79-beta.1",
     "@isaacs/ttlcache": "^2.1.4",
-    "@mariozechner/pi-agent-core": "^0.70.2",
-    "@mariozechner/pi-ai": "^0.70.2",
-    "@mariozechner/pi-coding-agent": "^0.70.2",
     "@modelcontextprotocol/sdk": "^1.20.1",
     "@opencode-ai/sdk": "1.14.46",
     "@sctg/sentencepiece-js": "^1.1.0",
@@ -101,11 +103,11 @@
     "@types/qrcode": "^1.5.6",
     "@types/uuid": "^9.0.7",
     "@types/ws": "^8.5.8",
-    "@vitest/ui": "^3.2.4",
+    "@vitest/ui": "^4.1.6",
     "cross-env": "^10.1.0",
     "tsx": "^4.6.0",
     "typescript": "^5.2.2",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.6"
   },
   "overrides": {
     "lightningcss": "1.30.1"

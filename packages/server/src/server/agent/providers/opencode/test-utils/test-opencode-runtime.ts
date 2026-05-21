@@ -8,7 +8,11 @@ interface OpenCodeResponse {
 }
 
 export class TestOpenCodeRuntime implements OpenCodeRuntime {
-  readonly acquisitions: Array<{ force: boolean; releaseCount: number }> = [];
+  readonly acquisitions: Array<{
+    force: boolean;
+    env?: Record<string, string>;
+    releaseCount: number;
+  }> = [];
   readonly clientCreations: Array<{ baseUrl: string; directory: string }> = [];
   private readonly clients: TestOpenCodeClient[] = [];
 
@@ -18,8 +22,11 @@ export class TestOpenCodeRuntime implements OpenCodeRuntime {
     this.clients.push(client);
   }
 
-  async acquireServer(options: { force: boolean }): Promise<OpenCodeServerAcquisition> {
-    const acquisition = { force: options.force, releaseCount: 0 };
+  async acquireServer(options: {
+    force: boolean;
+    env?: Record<string, string>;
+  }): Promise<OpenCodeServerAcquisition> {
+    const acquisition = { force: options.force, env: options.env, releaseCount: 0 };
     this.acquisitions.push(acquisition);
     return {
       server: this.server,
@@ -47,6 +54,7 @@ export class TestOpenCodeClient {
     appAgents: [] as unknown[],
     commandList: [] as unknown[],
     eventSubscribe: [] as unknown[],
+    experimentalSessionList: [] as unknown[],
     globalEvent: [] as unknown[],
     permissionReply: [] as unknown[],
     providerList: [] as unknown[],
@@ -64,7 +72,8 @@ export class TestOpenCodeClient {
 
   appAgentsResponse: OpenCodeResponse = { data: [] };
   commandListResponse: OpenCodeResponse = { data: [] };
-  eventStream: AsyncIterable<unknown> = createEventStream([idleEvent()]);
+  eventStream: AsyncIterable<unknown>;
+  experimentalSessionListResponse: OpenCodeResponse = { data: [] };
   permissionReplyResponse: OpenCodeResponse = {};
   providerListResponse: OpenCodeResponse = { data: { connected: [], all: [] } };
   providerListImplementation: (() => Promise<OpenCodeResponse>) | null = null;
@@ -72,13 +81,24 @@ export class TestOpenCodeClient {
   questionReplyResponse: OpenCodeResponse = {};
   sessionAbortResponse: OpenCodeResponse = {};
   sessionCommandError: unknown = null;
+  sessionCommandEvents: unknown[] = [idleEvent()];
   sessionCommandResponse: OpenCodeResponse = {};
   sessionCreateResponse: OpenCodeResponse = { data: { id: "session-1" } };
   sessionDeleteResponse: OpenCodeResponse = {};
   sessionMessagesResponse: OpenCodeResponse = { data: [] };
+  sessionPromptAsyncEvents: unknown[] = [idleEvent()];
   sessionPromptAsyncResponse: OpenCodeResponse = {};
   sessionSummarizeResponse: OpenCodeResponse = { data: {} };
   sessionUpdateResponse: OpenCodeResponse = {};
+  private readonly queuedEventStream = createQueuedEventStream();
+
+  constructor() {
+    this.eventStream = this.queuedEventStream.stream;
+  }
+
+  emitEvent(event: unknown): void {
+    this.queuedEventStream.emit(event);
+  }
 
   asSdkClient(): OpencodeClient {
     return {
@@ -98,6 +118,14 @@ export class TestOpenCodeClient {
         subscribe: async (parameters: unknown, options: unknown) => {
           this.calls.eventSubscribe.push({ parameters, options });
           return { stream: this.eventStream };
+        },
+      },
+      experimental: {
+        session: {
+          list: async (parameters: unknown) => {
+            this.calls.experimentalSessionList.push(parameters);
+            return this.experimentalSessionListResponse;
+          },
         },
       },
       global: {
@@ -144,6 +172,9 @@ export class TestOpenCodeClient {
           if (this.sessionCommandError) {
             throw this.sessionCommandError;
           }
+          for (const event of this.sessionCommandEvents) {
+            this.emitEvent(event);
+          }
           return this.sessionCommandResponse;
         },
         create: async (parameters: unknown) => {
@@ -160,6 +191,9 @@ export class TestOpenCodeClient {
         },
         promptAsync: async (parameters: unknown) => {
           this.calls.sessionPromptAsync.push(parameters);
+          for (const event of this.sessionPromptAsyncEvents) {
+            this.emitEvent(event);
+          }
           return this.sessionPromptAsyncResponse;
         },
         summarize: async (parameters: unknown) => {
@@ -181,6 +215,38 @@ export function createEventStream(events: unknown[]): AsyncGenerator<unknown> {
       yield event;
     }
   })();
+}
+
+function createQueuedEventStream(): {
+  stream: AsyncIterable<unknown>;
+  emit: (event: unknown) => void;
+} {
+  const queue: unknown[] = [];
+  const waiters: Array<(result: IteratorResult<unknown>) => void> = [];
+
+  return {
+    stream: {
+      [Symbol.asyncIterator]: () => ({
+        next: () => {
+          const event = queue.shift();
+          if (event !== undefined) {
+            return Promise.resolve({ done: false, value: event });
+          }
+          return new Promise<IteratorResult<unknown>>((resolve) => {
+            waiters.push(resolve);
+          });
+        },
+      }),
+    },
+    emit: (event: unknown) => {
+      const waiter = waiters.shift();
+      if (waiter) {
+        waiter({ done: false, value: event });
+        return;
+      }
+      queue.push(event);
+    },
+  };
 }
 
 export function idleEvent(): unknown {

@@ -5,7 +5,9 @@ import {
   AgentCreatedStatusPayloadSchema,
   AgentRefreshedStatusPayloadSchema,
   AgentResumedStatusPayloadSchema,
+  CheckoutRenameBranchResponseSchema,
   parseServerInfoStatusPayload,
+  RenameTerminalResponseSchema,
   RestartRequestedStatusPayloadSchema,
   ShutdownRequestedStatusPayloadSchema,
   SessionInboundMessageSchema,
@@ -32,6 +34,7 @@ import type {
   CheckoutPrCreateResponse,
   CheckoutPrMergeResponse,
   CheckoutPrMergeMethod,
+  CheckoutGithubSetAutoMergeResponse,
   CheckoutPrStatusResponse,
   PullRequestTimelineResponse,
   CheckoutSwitchBranchResponse,
@@ -59,6 +62,8 @@ import type {
   GetProvidersSnapshotResponseMessage,
   RefreshProvidersSnapshotResponseMessage,
   ProviderDiagnosticResponseMessage,
+  DaemonGetStatusResponse,
+  DaemonGetPairingOfferResponse,
   ListTerminalsResponse,
   CreateTerminalResponse,
   SubscribeTerminalResponse,
@@ -244,6 +249,7 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   config?: AgentSessionConfig;
   provider?: AgentProvider;
   cwd?: string;
+  env?: CreateAgentRequestMessage["env"];
   workspaceId?: string;
   initialPrompt?: string;
   clientMessageId?: string;
@@ -251,6 +257,8 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   images?: CreateAgentRequestMessage["images"];
   attachments?: CreateAgentRequestMessage["attachments"];
   git?: GitSetupOptions;
+  worktree?: CreateAgentRequestMessage["worktree"];
+  autoArchive?: CreateAgentRequestMessage["autoArchive"];
   worktreeName?: string;
   requestId?: string;
   labels?: Record<string, string>;
@@ -258,7 +266,13 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
 
 export interface CreatePaseoWorktreeInput extends Pick<
   CreatePaseoWorktreeRequest,
-  "cwd" | "worktreeSlug" | "firstAgentContext" | "refName" | "action" | "githubPrNumber"
+  | "cwd"
+  | "projectId"
+  | "worktreeSlug"
+  | "firstAgentContext"
+  | "refName"
+  | "action"
+  | "githubPrNumber"
 > {}
 
 type CheckoutStatusPayload = CheckoutStatusResponse["payload"];
@@ -274,9 +288,11 @@ type CheckoutPullPayload = CheckoutPullResponse["payload"];
 type CheckoutPushPayload = CheckoutPushResponse["payload"];
 type CheckoutPrCreatePayload = CheckoutPrCreateResponse["payload"];
 type CheckoutPrMergePayload = CheckoutPrMergeResponse["payload"];
+type CheckoutGithubSetAutoMergePayload = CheckoutGithubSetAutoMergeResponse["payload"];
 type CheckoutPrStatusPayload = CheckoutPrStatusResponse["payload"];
 type PullRequestTimelinePayload = PullRequestTimelineResponse["payload"];
 type CheckoutSwitchBranchPayload = CheckoutSwitchBranchResponse["payload"];
+export type RenameBranchResult = z.infer<typeof CheckoutRenameBranchResponseSchema>["payload"];
 type StashSavePayload = StashSaveResponse["payload"];
 type StashPopPayload = StashPopResponse["payload"];
 type StashListPayload = StashListResponse["payload"];
@@ -309,6 +325,8 @@ type ListAvailableProvidersPayload = ListAvailableProvidersResponse["payload"];
 type GetProvidersSnapshotPayload = GetProvidersSnapshotResponseMessage["payload"];
 type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["payload"];
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
+type DaemonStatusPayload = DaemonGetStatusResponse["payload"];
+type DaemonPairingOfferPayload = DaemonGetPairingOfferResponse["payload"];
 type ReadProjectConfigPayload = Extract<
   SessionOutboundMessage,
   { type: "read_project_config_response" }
@@ -343,6 +361,7 @@ type DictationFinishAcceptedPayload = Extract<
 type AgentPermissionResolvedPayload = AgentPermissionResolvedMessage["payload"];
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 type CreateTerminalPayload = CreateTerminalResponse["payload"];
+export type RenameTerminalResult = z.infer<typeof RenameTerminalResponseSchema>["payload"];
 type SubscribeTerminalPayload = SubscribeTerminalResponse["payload"];
 type CloseItemsPayload = CloseItemsResponse["payload"];
 type KillTerminalPayload = KillTerminalResponse["payload"];
@@ -606,6 +625,16 @@ export interface UpdateScheduleOptions {
   expiresAt?: string | null;
   requestId?: string;
 }
+export interface RenameBranchInput {
+  cwd: string;
+  branch: string;
+  requestId?: string;
+}
+export interface RenameTerminalInput {
+  terminalId: string;
+  title: string;
+  requestId?: string;
+}
 type ListAvailableEditorsPayload = ListAvailableEditorsResponseMessage["payload"];
 type OpenInEditorPayload = OpenInEditorResponseMessage["payload"];
 type OpenProjectPayload = OpenProjectResponseMessage["payload"];
@@ -692,6 +721,8 @@ class DaemonRpcError extends Error {
 const DEFAULT_RECONNECT_BASE_DELAY_MS = 1500;
 const DEFAULT_RECONNECT_MAX_DELAY_MS = 30000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 15000;
+const DEFAULT_LIVENESS_TIMEOUT_MS = 5000;
+const LIVENESS_FAILURE_RECONNECT_THRESHOLD = 2;
 
 /** Default timeout for waiting for connection before sending queued messages */
 const DEFAULT_SEND_QUEUE_TIMEOUT_MS = 10000;
@@ -798,6 +829,14 @@ interface PendingSend {
   timeoutHandle: ReturnType<typeof setTimeout>;
 }
 
+interface LivenessProbe {
+  promise: Promise<{ rttMs: number }>;
+  resolve: (value: { rttMs: number }) => void;
+  reject: (error: Error) => void;
+  timeoutHandle: ReturnType<typeof setTimeout>;
+  startedAt: number;
+}
+
 export class DaemonClient {
   private transport: DaemonTransport | null = null;
   private transportCleanup: Array<() => void> = [];
@@ -841,6 +880,8 @@ export class DaemonClient {
   private lastServerInfoMessage: ServerInfoStatusPayload | null = null;
   private runtimeMetricsInterval: ReturnType<typeof setInterval> | null = null;
   private runtimeMetrics: DaemonClientRuntimeMetrics | null = null;
+  private livenessProbe: LivenessProbe | null = null;
+  private consecutiveLivenessFailures = 0;
 
   constructor(private config: DaemonClientConfig) {
     this.logger = config.logger ?? consoleLogger;
@@ -1102,6 +1143,7 @@ export class DaemonClient {
     this.disposeTransport(1000, "Client closed");
     this.clearWaiters(new Error("Daemon client closed"));
     this.rejectPendingSendQueue(new Error("Daemon client closed"));
+    this.rejectLivenessProbe(new Error("Daemon client closed"));
     this.terminalStreams.clearSlots();
     this.lastServerInfoMessage = null;
     if (this.runtimeMetricsInterval) {
@@ -1425,6 +1467,25 @@ export class DaemonClient {
     });
   }
 
+  private sendNamespacedCorrelatedSessionRequest<
+    TResponseType extends CorrelatedResponseType,
+    TResult = CorrelatedResponsePayload<TResponseType>,
+  >(params: {
+    requestId?: string;
+    message: { type: Extract<SessionInboundMessage["type"], `${string}.request`> } & Record<
+      string,
+      unknown
+    >;
+    timeout: number;
+    selectPayload?: (payload: CorrelatedResponsePayload<TResponseType>) => TResult | null;
+  }): Promise<TResult> {
+    const responseType = params.message.type.replace(/\.request$/, ".response") as TResponseType;
+    return this.sendCorrelatedSessionRequest({
+      ...params,
+      responseType,
+    });
+  }
+
   private sendSessionMessageStrict(message: SessionInboundMessage): void {
     if (!this.transport || this.connectionState.status !== "connected") {
       throw new Error("Transport not connected");
@@ -1516,6 +1577,54 @@ export class DaemonClient {
       serverSentAt: payload.serverSentAt,
       rttMs: Date.now() - clientSentAt,
     };
+  }
+
+  checkLiveness(params?: { timeoutMs?: number }): Promise<{ rttMs: number }> {
+    if (this.connectionState.status !== "connected" || !this.transport) {
+      return Promise.reject(
+        new Error(`Transport not connected (status: ${this.connectionState.status})`),
+      );
+    }
+
+    if (this.livenessProbe) {
+      return this.livenessProbe.promise;
+    }
+
+    const startedAt = perfNow();
+    const timeoutMs = Math.max(1, params?.timeoutMs ?? DEFAULT_LIVENESS_TIMEOUT_MS);
+    let resolveProbe: ((value: { rttMs: number }) => void) | null = null;
+    let rejectProbe: ((error: Error) => void) | null = null;
+    const promise = new Promise<{ rttMs: number }>((resolve, reject) => {
+      resolveProbe = resolve;
+      rejectProbe = reject;
+    });
+    const probe: LivenessProbe = {
+      promise,
+      resolve: (value) => resolveProbe?.(value),
+      reject: (error) => rejectProbe?.(error),
+      timeoutHandle: setTimeout(() => {
+        if (this.livenessProbe !== probe) {
+          return;
+        }
+        this.livenessProbe = null;
+        const error = new Error(`Liveness check timed out (${timeoutMs}ms)`);
+        probe.reject(error);
+        this.recordLivenessFailure(error);
+      }, timeoutMs),
+      startedAt,
+    };
+    this.livenessProbe = probe;
+
+    try {
+      this.transport.send(JSON.stringify({ type: "ping" }));
+    } catch (error) {
+      this.clearLivenessProbe();
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.recordLivenessFailure(err);
+      return Promise.reject(err);
+    }
+
+    return promise;
   }
 
   // ============================================================================
@@ -1792,6 +1901,7 @@ export class DaemonClient {
       type: "create_agent_request",
       requestId,
       config,
+      ...(options.env ? { env: options.env } : {}),
       ...(options.workspaceId !== undefined ? { workspaceId: options.workspaceId } : {}),
       ...(options.initialPrompt ? { initialPrompt: options.initialPrompt } : {}),
       ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
@@ -1801,6 +1911,8 @@ export class DaemonClient {
         ? { attachments: options.attachments }
         : {}),
       ...(options.git ? { git: options.git } : {}),
+      ...(options.worktree ? { worktree: options.worktree } : {}),
+      ...(options.autoArchive !== undefined ? { autoArchive: options.autoArchive } : {}),
       ...(options.worktreeName ? { worktreeName: options.worktreeName } : {}),
       ...(options.labels && Object.keys(options.labels).length > 0
         ? { labels: options.labels }
@@ -1915,6 +2027,27 @@ export class DaemonClient {
     if (!payload.accepted) {
       throw new Error(payload.error ?? "updateAgent rejected");
     }
+  }
+
+  async renameProject(
+    projectId: string,
+    customName: string | null,
+    requestId?: string,
+  ): Promise<{ customName: string | null }> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "project.rename.request",
+        projectId,
+        customName,
+      },
+      responseType: "project.rename.response",
+      timeout: 10000,
+    });
+    if (!payload.accepted) {
+      throw new Error(payload.error ?? "renameProject rejected");
+    }
+    return { customName: payload.customName };
   }
 
   async resumeAgent(
@@ -2817,6 +2950,23 @@ export class DaemonClient {
     });
   }
 
+  async checkoutGithubSetAutoMerge(
+    cwd: string,
+    input: { enabled: true; method: CheckoutPrMergeMethod } | { enabled: false },
+    requestId?: string,
+  ): Promise<CheckoutGithubSetAutoMergePayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"checkout.github.set_auto_merge.response">({
+      requestId,
+      message: {
+        type: "checkout.github.set_auto_merge.request",
+        cwd,
+        enabled: input.enabled,
+        ...(input.enabled ? { mergeMethod: input.method } : {}),
+      },
+      timeout: 60000,
+    });
+  }
+
   async checkoutPrStatus(cwd: string, requestId?: string): Promise<CheckoutPrStatusPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
@@ -2860,6 +3010,19 @@ export class DaemonClient {
         branch,
       },
       responseType: "checkout_switch_branch_response",
+      timeout: 30000,
+    });
+  }
+
+  async renameBranch(input: RenameBranchInput): Promise<RenameBranchResult> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: input.requestId,
+      message: {
+        type: "checkout.rename_branch.request",
+        cwd: input.cwd,
+        branch: input.branch,
+      },
+      responseType: "checkout.rename_branch.response",
       timeout: 30000,
     });
   }
@@ -2953,6 +3116,7 @@ export class DaemonClient {
       message: {
         type: "create_paseo_worktree_request",
         cwd: input.cwd,
+        ...(input.projectId !== undefined ? { projectId: input.projectId } : {}),
         worktreeSlug: input.worktreeSlug,
         ...(input.firstAgentContext !== undefined
           ? { firstAgentContext: input.firstAgentContext }
@@ -3024,6 +3188,7 @@ export class DaemonClient {
       cwd?: string;
       includeFiles?: boolean;
       includeDirectories?: boolean;
+      matchMode?: "fuzzy" | "suffix";
     },
     requestId?: string,
   ): Promise<DirectorySuggestionsPayload> {
@@ -3035,6 +3200,7 @@ export class DaemonClient {
         cwd: options.cwd,
         includeFiles: options.includeFiles,
         includeDirectories: options.includeDirectories,
+        matchMode: options.matchMode,
         limit: options.limit,
       },
       responseType: "directory_suggestions_response",
@@ -3226,6 +3392,28 @@ export class DaemonClient {
         type: "get_daemon_config_request",
       },
       responseType: "get_daemon_config_response",
+      timeout: 10000,
+    });
+  }
+
+  async getDaemonStatus(requestId?: string): Promise<DaemonStatusPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "daemon.get_status.request",
+      },
+      responseType: "daemon.get_status.response",
+      timeout: 10000,
+    });
+  }
+
+  async getDaemonPairingOffer(requestId?: string): Promise<DaemonPairingOfferPayload> {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "daemon.get_pairing_offer.request",
+      },
+      responseType: "daemon.get_pairing_offer.response",
       timeout: 10000,
     });
   }
@@ -3564,6 +3752,19 @@ export class DaemonClient {
       responseType: "create_terminal_response",
       timeout: 10000,
       options: { skipQueue: true },
+    });
+  }
+
+  async renameTerminal(input: RenameTerminalInput): Promise<RenameTerminalResult> {
+    return this.sendCorrelatedSessionRequest({
+      requestId: input.requestId,
+      message: {
+        type: "terminal.rename.request",
+        terminalId: input.terminalId,
+        title: input.title,
+      },
+      responseType: "terminal.rename.response",
+      timeout: 10000,
     });
   }
 
@@ -4127,7 +4328,10 @@ export class DaemonClient {
       return;
     }
 
+    this.consecutiveLivenessFailures = 0;
+
     if (parsed.data.type === "pong") {
+      this.resolveLivenessProbe();
       this.runtimeMetrics?.recordMessage("pong", bytes, perfNow() - startMs);
       return;
     }
@@ -4276,6 +4480,7 @@ export class DaemonClient {
     // and responses from the previous connection will never arrive.
     this.clearWaiters(new Error(reason ?? "Connection lost"));
     this.rejectPendingSendQueue(new Error(reason ?? "Connection lost"));
+    this.rejectLivenessProbe(new Error(reason ?? "Connection lost"));
     this.terminalStreams.clearSlots();
     this.lastServerInfoMessage = null;
 
@@ -4322,6 +4527,50 @@ export class DaemonClient {
       }
       this.attemptConnect();
     }, delay);
+  }
+
+  private resolveLivenessProbe(): void {
+    const probe = this.livenessProbe;
+    if (!probe) {
+      return;
+    }
+    this.livenessProbe = null;
+    clearTimeout(probe.timeoutHandle);
+    probe.resolve({ rttMs: perfNow() - probe.startedAt });
+  }
+
+  private clearLivenessProbe(): void {
+    const probe = this.livenessProbe;
+    if (!probe) {
+      return;
+    }
+    this.livenessProbe = null;
+    clearTimeout(probe.timeoutHandle);
+  }
+
+  private rejectLivenessProbe(error: Error): void {
+    const probe = this.livenessProbe;
+    if (!probe) {
+      return;
+    }
+    this.livenessProbe = null;
+    clearTimeout(probe.timeoutHandle);
+    probe.reject(error);
+  }
+
+  private recordLivenessFailure(error: Error): void {
+    this.consecutiveLivenessFailures += 1;
+    if (this.consecutiveLivenessFailures < LIVENESS_FAILURE_RECONNECT_THRESHOLD) {
+      return;
+    }
+    this.consecutiveLivenessFailures = 0;
+    this.lastErrorValue = error.message;
+    this.disposeTransport(1001, "Liveness check timed out");
+    this.scheduleReconnect({
+      reason: error.message,
+      event: "LIVENESS_TIMEOUT",
+      reasonCode: "liveness_timeout",
+    });
   }
 
   private handleSessionMessage(msg: SessionOutboundMessage): void {
@@ -4533,6 +4782,7 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     config,
     provider,
     cwd,
+    env: _env,
     workspaceId: _workspaceId,
     initialPrompt: _initialPrompt,
     images: _images,

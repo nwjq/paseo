@@ -22,13 +22,13 @@ Your code never leaves your machine. Paseo is local-first.
             │  (Node.js)  │
             └──────┬──────┘
                    │
-      ┌────────────┼────────────┐
-      │            │            │
-┌─────▼─────┐ ┌───▼────┐ ┌────▼─────┐
-│  Claude   │ │ Codex  │ │ OpenCode │
-│  Agent    │ │ Agent  │ │  Agent   │
-│  SDK      │ │ Server │ │          │
-└───────────┘ └────────┘ └──────────┘
+      ┌────────────┼────────────┬────────────┬────────────┐
+      │            │            │            │            │
+┌─────▼─────┐ ┌───▼────┐ ┌──────▼─────┐ ┌────▼─────┐ ┌────▼────┐
+│  Claude   │ │ Codex  │ │  Copilot   │ │ OpenCode │ │   Pi    │
+│  Agent    │ │ Agent  │ │   Agent    │ │  Agent   │ │ Agent   │
+│  SDK      │ │ Server │ │    ACP     │ │          │ │         │
+└───────────┘ └────────┘ └────────────┘ └──────────┘ └─────────┘
 ```
 
 ## Components at a glance
@@ -107,7 +107,7 @@ Enables remote access when the daemon is behind a firewall.
 - Relay server is zero-knowledge — it routes encrypted bytes, cannot read content
 - Client and daemon channels with identical API (`createClientChannel`, `createDaemonChannel`)
 - Pairing via QR code transfers the daemon's public key to the client
-- Self-hosted relays opt into TLS with `daemon.relay.useTls` or `PASEO_RELAY_USE_TLS=true`
+- Self-hosted relays opt into TLS with `daemon.relay.useTls` or `PASEO_RELAY_USE_TLS=true`; the public (client-facing) TLS setting can be overridden independently via `daemon.relay.publicUseTls` or `PASEO_RELAY_PUBLIC_USE_TLS`
 
 See [SECURITY.md](../SECURITY.md) for the full threat model.
 
@@ -145,6 +145,10 @@ Server → Client:  status message with payload { status: "server_info",
 There is no dedicated welcome message; the server emits a `status` session message after accepting the hello, then begins streaming. The session stores client capabilities from the hello and rehydrates them on reconnect, so the wire boundary can ask one question: `session.supports(...)`.
 
 **Top-level WS envelopes** are `hello`, `recording_state`, `ping`/`pong`, and `session` (which wraps the rich union of session messages).
+
+Client liveness checks use the top-level JSON `ping`/`pong` envelope, not a session RPC and not RFC6455 protocol ping. The app runs through browser and React Native WebSocket APIs, which do not expose protocol ping, so this envelope is the portable way to test the direct or relay data path. Session RPC timeouts are operation failures and must not be treated as proof that the socket is dead.
+
+New session RPCs use dotted names with `.request` and `.response` suffixes, such as `checkout.github.set_auto_merge.request` and `checkout.github.set_auto_merge.response`. See [rpc-namespacing.md](rpc-namespacing.md) for the convention and migration rules for older flat RPC names.
 
 **Notable session message types:**
 
@@ -205,6 +209,7 @@ initializing → idle ⇄ running
 
 - **AgentManager** is the source of truth for agent state and broadcasts updates to all subscribers
 - Timeline is append-only with epochs (each run starts a new epoch). Storage uses sequence numbers for client-side dedup; the default fetch page is 200 items
+- Timeline row `timestamp` values are canonical daemon-owned timestamps. Providers may supply original replay timestamps, but clients must not guess timestamp trust or hide time UI based on local clock heuristics.
 - Events stream to all subscribed clients in real time
 - Agent state persists to `$PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json` (timeline rows live alongside the record)
 
@@ -212,16 +217,17 @@ initializing → idle ⇄ running
 
 Each provider implements the `AgentClient` interface in `agent/agent-sdk-types.ts`. Provider implementations live in `agent/providers/`.
 
-The three first-class, user-facing providers are Claude Code, Codex, and OpenCode. Additional adapters exist in the same directory for ACP-compatible agents and internal use:
+The built-in, user-facing providers are Claude Code, Codex, Copilot, OpenCode, and Pi. Additional adapters exist in the same directory for ACP-compatible agents and internal use:
 
 | Provider           | Wraps                                | Session format                                     |
 | ------------------ | ------------------------------------ | -------------------------------------------------- |
 | Claude (`claude/`) | Anthropic Agent SDK                  | `~/.claude/projects/{cwd}/{session-id}.jsonl`      |
 | Codex              | Codex AppServer (`codex-app-server`) | `~/.codex/sessions/{date}/rollout-{ts}-{id}.jsonl` |
+| Copilot            | GitHub Copilot via ACP               | Provider-managed                                   |
 | OpenCode           | OpenCode server / CLI                | Provider-managed                                   |
-| Cursor / Copilot   | ACP wrapper (`acp-agent`)            | Provider-managed                                   |
+| Cursor             | ACP wrapper (`acp-agent`)            | Provider-managed                                   |
 | Generic ACP        | ACP wrapper                          | Provider-managed                                   |
-| Pi-direct          | Direct Anthropic API call            | Stateless                                          |
+| Pi                 | Local Pi RPC process                 | Provider-managed                                   |
 | Mock load test     | In-process fake                      | In-memory                                          |
 
 All providers:

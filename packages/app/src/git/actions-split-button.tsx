@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
+import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useToast } from "@/contexts/toast-context";
 import type { GitAction, GitActions } from "@/git/policy";
@@ -97,24 +98,33 @@ export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSpli
     [theme.colors.foreground, toast],
   );
 
+  const handlePrimaryPress = useCallback(() => {
+    if (!gitActions.primary) {
+      return;
+    }
+    handleActionSelect(gitActions.primary);
+  }, [gitActions.primary, handleActionSelect]);
+
   const overflowMenuButtonStyle = useMemo(() => [styles.iconButton, styles.overflowMenuButton], []);
 
   const primaryDisabled = gitActions.primary?.disabled;
   const primaryPressableStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.splitButtonPrimary,
-      (Boolean(hovered) || pressed) && styles.splitButtonPrimaryHovered,
+      (Boolean(hovered) || pressed) &&
+        inlineUnistylesStyle({ backgroundColor: theme.colors.surface2 }),
       primaryDisabled && styles.splitButtonPrimaryDisabled,
     ],
-    [primaryDisabled],
+    [primaryDisabled, theme.colors.surface2],
   );
 
   const caretTriggerStyle = useCallback(
     ({ hovered, pressed, open }: { hovered: boolean; pressed: boolean; open: boolean }) => [
       styles.splitButtonCaret,
-      (hovered || pressed || open) && styles.splitButtonCaretHovered,
+      (hovered || pressed || open) &&
+        inlineUnistylesStyle({ backgroundColor: theme.colors.surface2 }),
     ],
-    [],
+    [theme.colors.surface2],
   );
 
   return (
@@ -124,7 +134,7 @@ export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSpli
           <Pressable
             testID="changes-primary-cta"
             style={primaryPressableStyle}
-            onPress={gitActions.primary.handler}
+            onPress={handlePrimaryPress}
             disabled={gitActions.primary.disabled}
             accessibilityRole="button"
             accessibilityLabel={gitActions.primary.label}
@@ -223,9 +233,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     position: "relative",
   },
-  splitButtonPrimaryHovered: {
-    backgroundColor: theme.colors.surface2,
-  },
   splitButtonPrimaryDisabled: {
     opacity: 0.6,
   },
@@ -250,9 +257,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     borderLeftWidth: theme.borderWidth[1],
     borderLeftColor: theme.colors.borderAccent,
-  },
-  splitButtonCaretHovered: {
-    backgroundColor: theme.colors.surface2,
   },
   iconButton: {
     width: 32,
