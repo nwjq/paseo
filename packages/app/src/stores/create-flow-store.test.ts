@@ -14,6 +14,7 @@ describe("create-flow-store", () => {
       agentId: null,
       clientMessageId: "msg-1",
       text: "hello",
+      cwd: "/repo",
       timestamp: Date.now(),
       images: [],
     });
@@ -31,6 +32,7 @@ describe("create-flow-store", () => {
       agentId: null,
       clientMessageId: "msg-1",
       text: "hello",
+      cwd: "/repo",
       timestamp: Date.now(),
       images: [],
     });
@@ -54,6 +56,7 @@ describe("create-flow-store", () => {
       agentId: null,
       clientMessageId: "msg-1",
       text: "one",
+      cwd: "/repo/one",
       timestamp: Date.now(),
     });
     useCreateFlowStore.getState().setPending({
@@ -62,6 +65,7 @@ describe("create-flow-store", () => {
       agentId: null,
       clientMessageId: "msg-2",
       text: "two",
+      cwd: "/repo/two",
       timestamp: Date.now(),
     });
 
@@ -69,6 +73,24 @@ describe("create-flow-store", () => {
     expect(Object.keys(state.pendingByDraftId).sort()).toEqual(["draft-1", "draft-2"]);
 
     useCreateFlowStore.getState().clear({ draftId: "draft-1" });
+    expect(useCreateFlowStore.getState().pendingByDraftId["draft-1"]).toBeUndefined();
+  });
+
+  it("clears pending handoff state by agent", () => {
+    useCreateFlowStore.getState().setPending({
+      draftId: "draft-1",
+      serverId: "server-1",
+      agentId: null,
+      clientMessageId: "msg-1",
+      text: "hello",
+      cwd: "/repo",
+      timestamp: Date.now(),
+    });
+    useCreateFlowStore.getState().updateAgentId({ draftId: "draft-1", agentId: "agent-1" });
+    useCreateFlowStore.getState().markLifecycle({ draftId: "draft-1", lifecycle: "sent" });
+
+    useCreateFlowStore.getState().clearByAgent({ serverId: "server-1", agentId: "agent-1" });
+
     expect(useCreateFlowStore.getState().pendingByDraftId["draft-1"]).toBeUndefined();
   });
 });

@@ -1,8 +1,11 @@
 import { z } from "zod";
 import type { AgentMode } from "./agent-sdk-types.js";
 
-export type AgentModeColorTier = "safe" | "moderate" | "dangerous" | "planning";
-export type AgentModeIcon = "ShieldCheck" | "ShieldAlert" | "ShieldOff" | "ShieldQuestionMark";
+export type AgentModeColorTier = "safe" | "moderate" | "dangerous" | "planning" | `#${string}`;
+// Open string by design: the client looks icons up in a registry and falls back
+// to a default for unknown values. Daemon downgrades unknown icons for clients
+// that pre-date the open-string contract (see CLIENT_CAPS.customModeIcons).
+export type AgentModeIcon = string;
 
 export interface AgentModeVisuals {
   icon: AgentModeIcon;
@@ -126,22 +129,14 @@ const OPENCODE_MODES: AgentProviderModeDefinition[] = [
     id: "build",
     label: "Build",
     description: "Allows edits and tool execution for implementation work",
-    icon: "ShieldCheck",
+    icon: "Bot",
     colorTier: "moderate",
-  },
-  {
-    id: "full-access",
-    label: "Full Access",
-    description: "Automatically approves all tool permission prompts for the session",
-    icon: "ShieldAlert",
-    colorTier: "dangerous",
-    isUnattended: true,
   },
   {
     id: "plan",
     label: "Plan",
     description: "Read-only planning mode that avoids file edits",
-    icon: "ShieldCheck",
+    icon: "Bot",
     colorTier: "planning",
   },
 ];

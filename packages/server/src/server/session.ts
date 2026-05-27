@@ -68,6 +68,8 @@ import { ensureAgentLoaded } from "./agent/agent-loading.js";
 import {
   formatSystemNotificationPrompt,
   sendPromptToAgent,
+  startCreatedAgentInitialPrompt,
+  waitForAgentRunStartWithTimeout,
   unarchiveAgentState,
 } from "./agent/agent-prompt.js";
 import { experimental_createMCPClient } from "ai";
@@ -322,6 +324,14 @@ type GitMutationRefreshReason =
 // Clients before 0.1.45 validate providers with z.enum(["claude", "codex", "opencode"]) and reject
 // the entire session message if they encounter an unknown provider.
 const LEGACY_PROVIDER_IDS = new Set(["claude", "codex", "opencode"]);
+// COMPAT(customModeIcons): the only mode icons known to clients before v0.1.84. Any
+// other icon name is downgraded to "ShieldCheck" for those clients.
+const LEGACY_MODE_ICONS = new Set<string>([
+  "ShieldCheck",
+  "ShieldAlert",
+  "ShieldOff",
+  "ShieldQuestionMark",
+]);
 const MIN_VERSION_ALL_PROVIDERS = "0.1.45";
 const MIN_VERSION_FLEXIBLE_EDITOR_IDS = "0.1.50";
 
@@ -993,6 +1003,25 @@ export class Session {
     return this.clientCapabilities.has(capability);
   }
 
+  // COMPAT(customModeIcons): rewrite icons unknown to v0.1.83 clients (whose MODE_ICONS
+  // map is a closed enum and would render `undefined`, crashing in render). Drop
+  // this and the cap gate when floor >= v0.1.84.
+  private downgradeModeIconsForClient<T extends { icon?: string }>(modes: T[]): T[] {
+    if (this.supports(CLIENT_CAPS.customModeIcons)) return modes;
+    return modes.map((mode) =>
+      mode.icon && !LEGACY_MODE_ICONS.has(mode.icon) ? { ...mode, icon: "ShieldCheck" } : mode,
+    );
+  }
+
+  private downgradeEntryModesForClient<T extends { modes?: { icon?: string }[] }>(
+    entries: T[],
+  ): T[] {
+    if (this.supports(CLIENT_CAPS.customModeIcons)) return entries;
+    return entries.map((entry) =>
+      entry.modes ? { ...entry, modes: this.downgradeModeIconsForClient(entry.modes) } : entry,
+    );
+  }
+
   async syncWorkspaceGitObserverForWorkspace(workspace: PersistedWorkspaceRecord): Promise<void> {
     const descriptor = await this.describeWorkspaceRecordWithGitData(workspace);
     this.syncWorkspaceGitObservers([descriptor]);
@@ -1238,11 +1267,12 @@ export class Session {
         const visibleEntries = entries.filter((entry) =>
           this.isProviderVisibleToClient(entry.provider),
         );
+        const snapshotCwd = cwd === resolveSnapshotCwd() ? undefined : cwd;
         this.emit({
           type: "providers_snapshot_update",
           payload: {
-            cwd,
-            entries: visibleEntries,
+            ...(snapshotCwd ? { cwd: snapshotCwd } : {}),
+            entries: this.downgradeEntryModesForClient(visibleEntries),
             generatedAt: new Date().toISOString(),
           },
         });
@@ -1417,7 +1447,7 @@ export class Session {
 
   private async buildAgentPayload(agent: ManagedAgent): Promise<AgentSnapshotPayload> {
     const storedRecord = await this.agentStorage.get(agent.id);
-    const title = storedRecord?.title ?? storedRecord?.config?.title ?? null;
+    const title = storedRecord?.title ?? null;
     const payload = toAgentPayload(agent, { title });
     const storedUpdatedAt = storedRecord ? resolveStoredAgentPayloadUpdatedAt(storedRecord) : null;
     if (storedUpdatedAt) {
@@ -1769,6 +1799,7 @@ export class Session {
   private async dispatchInboundMessage(msg: SessionInboundMessage): Promise<void> {
     const promise =
       this.dispatchVoiceAndControlMessage(msg) ??
+      this.dispatchAgentRewindMessage(msg) ??
       this.dispatchAgentLifecycleMessage(msg) ??
       this.dispatchAgentConfigMessage(msg) ??
       this.dispatchCheckoutMessage(msg) ??
@@ -1825,6 +1856,15 @@ export class Session {
         });
         return undefined;
       }
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchAgentRewindMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    switch (msg.type) {
+      case "agent.rewind.request":
+        return this.handleAgentRewindRequest(msg);
       default:
         return undefined;
     }
@@ -3076,7 +3116,6 @@ export class Session {
         agentManager: this.agentManager,
         agentStorage: this.agentStorage,
         agentId,
-        userMessageText: text,
         prompt,
         messageId,
         runOptions,
@@ -3128,10 +3167,7 @@ export class Session {
         configTitle: config.title,
         initialPrompt: trimmedPrompt,
       });
-      const resolvedConfig: AgentSessionConfig = {
-        ...config,
-        ...(provisionalTitle ? { title: provisionalTitle } : {}),
-      };
+      const resolvedConfig: AgentSessionConfig = config;
 
       const firstAgentContext: FirstAgentContext = {
         ...(trimmedPrompt ? { prompt: trimmedPrompt } : {}),
@@ -3165,6 +3201,7 @@ export class Session {
         workspaceId: resolvedWorkspace.workspaceId,
         initialPrompt: trimmedPrompt,
         env,
+        initialTitle: provisionalTitle,
       });
       createdAgentId = snapshot.id;
       await this.forwardAgentUpdate(snapshot);
@@ -3174,7 +3211,7 @@ export class Session {
         createdWorktree,
       });
 
-      await this.sendInitialCreateAgentPrompt({
+      const liveSnapshot = await this.sendInitialCreateAgentPrompt({
         snapshot,
         trimmedPrompt,
         images,
@@ -3185,12 +3222,12 @@ export class Session {
       });
 
       if (requestId) {
-        const agentPayload = await this.buildAgentPayload(snapshot);
+        const agentPayload = await this.buildAgentPayload(liveSnapshot);
         this.emit({
           type: "status",
           payload: {
             status: "agent_created",
-            agentId: snapshot.id,
+            agentId: liveSnapshot.id,
             requestId,
             agent: agentPayload,
           },
@@ -3236,20 +3273,20 @@ export class Session {
   }
 
   private async sendInitialCreateAgentPrompt(params: {
-    snapshot: { id: string; cwd: string };
+    snapshot: ManagedAgent;
     trimmedPrompt: string | undefined;
     images: Array<{ data: string; mimeType: string }> | undefined;
     attachments: AgentAttachment[] | undefined;
     clientMessageId: string | undefined;
     outputSchema: Record<string, unknown> | undefined;
     explicitTitle: string | null;
-  }): Promise<void> {
+  }): Promise<ManagedAgent> {
     const { snapshot, trimmedPrompt, images, attachments, clientMessageId, outputSchema } = params;
     const hasPrompt = Boolean(trimmedPrompt);
     const hasImages = (images?.length ?? 0) > 0;
     const hasAttachments = (attachments?.length ?? 0) > 0;
     if (!hasPrompt && !hasImages && !hasAttachments) {
-      return;
+      return snapshot;
     }
     scheduleAgentMetadataGeneration({
       agentManager: this.agentManager,
@@ -3261,18 +3298,18 @@ export class Session {
       paseoHome: this.paseoHome,
       logger: this.sessionLogger,
     });
+    const prompt = this.buildAgentPrompt(trimmedPrompt || "", images, attachments);
 
-    const started = await this.handleSendAgentMessage(
-      snapshot.id,
-      trimmedPrompt || "",
-      resolveClientMessageId(clientMessageId),
-      images,
-      attachments,
-      outputSchema ? { outputSchema } : undefined,
-    );
-    if (!started.ok) {
-      throw new Error(started.error);
-    }
+    return await startCreatedAgentInitialPrompt({
+      agentManager: this.agentManager,
+      agentId: snapshot.id,
+      snapshot,
+      prompt,
+      runOptions: outputSchema ? { outputSchema } : undefined,
+      logger: this.sessionLogger.child({
+        clientMessageId: resolveClientMessageId(clientMessageId),
+      }),
+    });
   }
 
   private async handleResumeAgentRequest(
@@ -3383,6 +3420,7 @@ export class Session {
         paseoHome: this.paseoHome,
         logger: this.sessionLogger,
       });
+      await this.registerWorkspaceForImportedAgent(snapshot.cwd);
       await this.forwardAgentUpdate(snapshot);
       const agentPayload = await this.buildAgentPayload(snapshot);
       this.emit({
@@ -3512,6 +3550,33 @@ export class Session {
       }
     } catch (error) {
       this.handleAgentRunError(agentId, error, "Failed to cancel running agent on request");
+    }
+  }
+
+  private async handleAgentRewindRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.rewind.request" }>,
+  ): Promise<void> {
+    try {
+      await this.agentManager.rewind(msg.agentId, msg.messageId, msg.mode);
+      this.emit({
+        type: "agent.rewind.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          ok: true,
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "agent.rewind.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          ok: false,
+          error: error instanceof Error ? error.message : "Failed to rewind agent",
+        },
+      });
     }
   }
 
@@ -3756,7 +3821,7 @@ export class Session {
           type: "list_provider_modes_response",
           payload: {
             provider: msg.provider,
-            modes: entry.modes ?? [],
+            modes: this.downgradeModeIconsForClient(entry.modes ?? []),
             error: null,
             fetchedAt: entry.fetchedAt ?? fetchedAt,
             requestId: msg.requestId,
@@ -3797,7 +3862,7 @@ export class Session {
         type: "list_provider_modes_response",
         payload: {
           provider: msg.provider,
-          modes,
+          modes: this.downgradeModeIconsForClient(modes),
           error: null,
           fetchedAt,
           requestId: msg.requestId,
@@ -4021,7 +4086,7 @@ export class Session {
     this.emit({
       type: "get_providers_snapshot_response",
       payload: {
-        entries,
+        entries: this.downgradeEntryModesForClient(entries),
         generatedAt: new Date().toISOString(),
         requestId: msg.requestId,
       },
@@ -7169,6 +7234,20 @@ export class Session {
     }
   }
 
+  private async registerWorkspaceForImportedAgent(cwd: string): Promise<void> {
+    try {
+      const workspace = await this.findOrCreateWorkspaceForDirectory(cwd);
+      await this.syncWorkspaceGitObserverForWorkspace(workspace);
+      await this.describeWorkspaceRecord(workspace);
+      await this.emitWorkspaceUpdateForCwd(workspace.cwd);
+    } catch (error) {
+      this.sessionLogger.warn(
+        { err: error, cwd },
+        "Failed to register workspace for imported agent",
+      );
+    }
+  }
+
   private async handleOpenProjectRequest(
     request: Extract<SessionInboundMessage, { type: "open_project_request" }>,
   ): Promise<void> {
@@ -7758,7 +7837,6 @@ export class Session {
           agentManager: this.agentManager,
           agentStorage: this.agentStorage,
           agentId,
-          userMessageText: msg.text,
           prompt,
           messageId: msg.messageId,
           logger: this.sessionLogger,
@@ -7791,11 +7869,8 @@ export class Session {
         return;
       }
 
-      const startAbort = new AbortController();
-      const startTimeoutMs = 15_000;
-      const startTimeout = setTimeout(() => startAbort.abort("timeout"), startTimeoutMs);
       try {
-        await this.agentManager.waitForAgentRunStart(agentId, { signal: startAbort.signal });
+        await waitForAgentRunStartWithTimeout(this.agentManager, agentId);
       } catch (error) {
         this.emit({
           type: "send_agent_message_response",
@@ -7807,8 +7882,6 @@ export class Session {
           },
         });
         return;
-      } finally {
-        clearTimeout(startTimeout);
       }
 
       this.emit({
@@ -8805,7 +8878,6 @@ export class Session {
             agentId,
             prompt: formatSystemNotificationPrompt(text),
             unarchive: false,
-            recordUserMessage: false,
             logger: this.sessionLogger,
           });
         },

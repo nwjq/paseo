@@ -1,16 +1,89 @@
 # Changelog
 
-## 0.1.79-beta.1 - 2026-05-20
+## 0.1.83 - 2026-05-26
+
+### Fixed
+
+- Creating an agent via MCP now waits for it to actually start, so failures surface as a clear create error
+- Scheduling an agent via MCP no longer rejects blank cadence placeholders
+- Draft messages show the agent mode chip again on models without thinking options
+
+## 0.1.82 - 2026-05-26
+
+### Added
+
+- **Rewind chat or files from any user message** ([#1154](https://github.com/getpaseo/paseo/pull/1154))
+- **See the cumulative cost of an agent session** ([#1163](https://github.com/getpaseo/paseo/pull/1163))
+- **Drop files onto the terminal to insert their paths** ([#1173](https://github.com/getpaseo/paseo/pull/1173))
+- **Tap a file path in the terminal to open it in the workspace preview** ([#1174](https://github.com/getpaseo/paseo/pull/1174))
+- **Approve OpenCode permissions for the whole session** ([#1168](https://github.com/getpaseo/paseo/pull/1168))
+- **Workspace scripts now appear on the mobile header** ([#1093](https://github.com/getpaseo/paseo/pull/1093) by [@ayhanmalkoc](https://github.com/ayhanmalkoc))
+- Devin CLI in the ACP provider catalog (by [@Alcimerio](https://github.com/Alcimerio))
+- OpenCode agents show their mode colors
+
+### Improved
+
+- Mobile terminal keyboard hides when you open a sidebar
+- Tool activity for read, write, and OpenCode tools renders more consistently ([#1171](https://github.com/getpaseo/paseo/pull/1171))
+- Compact workspace header actions are tidier
+- Settings latency readouts are easier to scan ([#1170](https://github.com/getpaseo/paseo/pull/1170))
+- Pull request merge is available as soon as GitHub reports the PR is ready ([#1172](https://github.com/getpaseo/paseo/pull/1172))
+
+### Fixed
+
+- Mobile slash command autocomplete no longer flickers or mis-layers
+- Interrupting an OpenCode agent returns it to idle instead of showing an error ([#1169](https://github.com/getpaseo/paseo/pull/1169))
+- Provider model selection per workspace is honored ([#1167](https://github.com/getpaseo/paseo/pull/1167))
+- Draft composer keeps the permission mode you selected ([#1175](https://github.com/getpaseo/paseo/pull/1175))
+- Terminal color queries no longer return malformed replies
+- File links in chat no longer crash when a message contains a bare '%' (by [@Elliotwu-7](https://github.com/Elliotwu-7))
+
+## 0.1.81 - 2026-05-24
+
+### Added
+
+- **Paseo can now be installed as a web app from supported browsers** ([#1144](https://github.com/getpaseo/paseo/pull/1144))
+- **Pi extension dialogs now appear as Paseo permission prompts** ([#1134](https://github.com/getpaseo/paseo/pull/1134) by [@yuruiz](https://github.com/yuruiz))
+- Added community links and a home button to the sidebar
+
+### Improved
+
+- **Mobile terminals load faster and restore existing output more smoothly** ([#1147](https://github.com/getpaseo/paseo/pull/1147))
+- Copying assistant messages preserves formatting
+- Agent metadata fallback failures now log each provider attempt for easier debugging
+
+### Fixed
+
+- Android: slash command suggestions stay interactive when opened from the composer
+- macOS: Alt+letter shortcuts work again
+- Terminal panes no longer flicker during resize
+- OpenCode MCP servers are injected once instead of being connected twice
+- Import session no longer shows empty sessions
+- Worktree archive status no longer reports false unpushed commits ([#1158](https://github.com/getpaseo/paseo/pull/1158))
+- The `/exit`, `/quit`, and `/q` slash command aliases now show as one row
+- Shortcut chord badges are readable in light mode
+- Segmented controls show their track under every segment
+- Sheet header search text is readable in dark mode
+
+## 0.1.80 - 2026-05-21
+
+### Fixed
+
+- Opening dropdown menus no longer crashes on mobile
+
+## 0.1.79 - 2026-05-21
 
 ### Added
 
 - **Pi has been revamped with first-class support**
-  - Pi now runs in a separate process, isolated from the rest of the daemon
-  - Pi runs through your installed Pi CLI, so your Pi extensions and configuration work exactly the same as launching Pi from your terminal
-  - Pi agents can call Paseo tools — create Paseo agents, work on worktrees, run anything in the Paseo MCP — when you have the Pi MCP extension installed
-  - Past Pi sessions can be imported into Paseo from Pi's saved history
+  - Runs through your installed Pi CLI, so your Pi extensions and configuration carry over
+  - Pi agents can call Paseo tools when you have the Pi MCP extension installed
+  - Import a Pi session you started in the terminal
+  - Copy Pi's resume command from any agent to continue the session in your terminal
   - Windows: Pi sessions match correctly across symlinked and junctioned workspace paths
-- **Set a custom system prompt for every agent you start** A daemon-wide system prompt gets appended to every supported agent provider
+- **New home screen with quick tiles for adding a project, importing a session, setting up providers, and pairing a device**
+- **Create an agent directly into a fresh worktree that auto-archives when the run finishes**
+- **Set a custom system prompt that applies to every agent you start**
 - **Rename workspaces, terminals, and agent tabs** ([#531](https://github.com/getpaseo/paseo/pull/531))
 - **DeepSeek TUI in the ACP provider catalog** ([#1096](https://github.com/getpaseo/paseo/pull/1096))
 - **Kiro CLI in the ACP provider catalog** (by [@huhusmang](https://github.com/huhusmang))
@@ -20,6 +93,7 @@
 
 ### Improved
 
+- **Stale host connections recover automatically without a manual refresh**
 - Paseo opens to the workspace you were on last time you used it ([#1101](https://github.com/getpaseo/paseo/pull/1101))
 - Workspaces remember which editor you opened them in
 - Outdated daemons now suggest an upgrade when they receive a command they don't understand
@@ -40,7 +114,6 @@
 - Claude file links resolve correctly for projects whose paths need SDK encoding
 - Duplicate Claude result text no longer appears in chat ([#1095](https://github.com/getpaseo/paseo/pull/1095))
 - Dynamic UI styles no longer leak CSS rules across the page ([#1103](https://github.com/getpaseo/paseo/pull/1103))
-- CLI queries daemon status and pairing offers through the proper RPC path (by [@yzx9](https://github.com/yzx9))
 - Relay handshakes reject sessions that try to change encryption keys mid-flight ([#1037](https://github.com/getpaseo/paseo/pull/1037) by [@joaosa](https://github.com/joaosa))
 
 ## 0.1.78 - 2026-05-18

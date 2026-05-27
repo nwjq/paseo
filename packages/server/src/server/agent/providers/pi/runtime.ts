@@ -17,6 +17,7 @@ export interface PiRuntimeLaunch {
   session?: string;
   systemPrompt?: string;
   mcpConfigPath?: string;
+  extensionPaths?: string[];
 }
 
 export interface PiStartSessionInput {
@@ -27,6 +28,7 @@ export interface PiStartSessionInput {
   session?: string;
   systemPrompt?: string;
   mcpConfigPath?: string;
+  extensionPaths?: string[];
 }
 
 export interface PiRuntimeSession {
@@ -43,6 +45,10 @@ export interface PiRuntimeSession {
   setThinkingLevel(level: string): Promise<void>;
   getSessionStats(): Promise<PiSessionStats>;
   getCommands(): Promise<PiRpcSlashCommand[]>;
+  respondToExtensionUiRequest(
+    id: string,
+    response: { value?: string; confirmed?: boolean; cancelled?: boolean },
+  ): void;
   cancelExtensionUiRequest(id: string): void;
   close(): Promise<void>;
 }
@@ -81,6 +87,9 @@ export function buildPiLaunch(input: {
   if (input.session.mcpConfigPath) {
     argv.push("--mcp-config", input.session.mcpConfigPath);
   }
+  for (const extensionPath of input.session.extensionPaths ?? []) {
+    argv.push("--extension", extensionPath);
+  }
 
   return {
     cwd: input.session.cwd,
@@ -97,6 +106,7 @@ export function buildPiLaunch(input: {
     session: input.session.session,
     systemPrompt,
     mcpConfigPath: input.session.mcpConfigPath,
+    extensionPaths: input.session.extensionPaths,
   };
 }
 
