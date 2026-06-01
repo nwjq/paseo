@@ -135,7 +135,7 @@ jobs:
           set -euo pipefail
           cd packages/app
 
-          npm run build:workspace-deps
+          npm --prefix ../.. run build:app-deps
           APP_VARIANT=production npx expo prebuild --platform android --non-interactive --clean
 
           cd android
