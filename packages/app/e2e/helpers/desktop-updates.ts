@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { expect, type Page } from "@playwright/test";
 import { openSettings } from "./app";
-import { openSettingsHost } from "./settings";
+import { getE2EDaemonPort } from "./daemon-port";
+import { openSettingsHost, openSettingsHostSection } from "./settings";
 
 interface DaemonApiStatus {
   version: string;
@@ -26,9 +27,8 @@ export interface RealDaemonState {
  * E2E_PASEO_HOME directory. Call this in Node test code (not in the browser).
  */
 export async function loadRealDaemonState(): Promise<RealDaemonState> {
-  const port = process.env.E2E_DAEMON_PORT;
+  const port = getE2EDaemonPort();
   const paseoHome = process.env.E2E_PASEO_HOME;
-  if (!port) throw new Error("E2E_DAEMON_PORT not set — globalSetup must run first");
   if (!paseoHome) throw new Error("E2E_PASEO_HOME not set — globalSetup must run first");
 
   const resp = await fetch(`http://127.0.0.1:${port}/api/status`);
@@ -208,6 +208,9 @@ export async function injectDesktopBridge(page: Page, config: DesktopBridgeConfi
 export async function openDesktopSettings(page: Page, serverId: string): Promise<void> {
   await openSettings(page);
   await openSettingsHost(page, serverId);
+  // The daemon-lifecycle card moved to the Daemon section in the flat-settings
+  // layout; navigate there before asserting it.
+  await openSettingsHostSection(page, serverId, "daemon");
   await expect(page.getByTestId("host-page-daemon-lifecycle-card")).toBeVisible({
     timeout: 15_000,
   });

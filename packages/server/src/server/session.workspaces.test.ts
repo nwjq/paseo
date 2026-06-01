@@ -9,7 +9,7 @@ import type {
   AgentSnapshotPayload,
   EditorTargetDescriptorPayload,
   SessionOutboundMessage,
-} from "../shared/messages.js";
+} from "@getpaseo/protocol/messages";
 import { AgentManager } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import type {
@@ -38,6 +38,7 @@ import {
   asDaemonConfigStore,
   asTerminalManager,
   asSessionInternals,
+  createProviderSnapshotManagerStub,
   isSessionOutboundMessage,
   filterByType,
   findByType,
@@ -66,6 +67,20 @@ interface SessionTestAccess {
   agentManager: {
     listAgents(): unknown[];
     listImportablePersistedAgents(options?: unknown): Promise<PersistedAgentDescriptor[]>;
+    findPersistedAgent(
+      provider: string,
+      providerHandleId: string,
+      options?: unknown,
+    ): Promise<PersistedAgentDescriptor | null>;
+    resumeAgentFromPersistence(
+      handle: unknown,
+      overrides?: unknown,
+      preferredId?: string,
+      extras?: unknown,
+    ): Promise<unknown>;
+    hydrateTimelineFromProvider(agentId: string): Promise<unknown>;
+    getTimeline(agentId: string): readonly unknown[];
+    setTitle(agentId: string, title: string): Promise<unknown>;
   };
   workspaceRegistry: {
     list(...args: unknown[]): Promise<unknown[]>;
@@ -496,6 +511,7 @@ function createSessionForWorkspaceTests(
       mcpBaseUrl: null,
       stt: null,
       tts: null,
+      providerSnapshotManager: createProviderSnapshotManagerStub().manager,
       terminalManager: null,
     }),
   );
@@ -605,6 +621,7 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
         mcpBaseUrl: null,
         stt: null,
         tts: null,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
         terminalManager: null,
       }),
     );
@@ -986,6 +1003,7 @@ test("archive emits an authoritative agent_update upsert for subscribed clients"
       mcpBaseUrl: null,
       stt: null,
       tts: null,
+      providerSnapshotManager: createProviderSnapshotManagerStub().manager,
       terminalManager: null,
     }),
   );
@@ -1057,6 +1075,7 @@ test("close_items_request archives agents and kills terminals in one batch", asy
     archivedAt: null,
   };
   const killTerminal = vi.fn();
+  const cancelAgentRun = vi.fn(async () => true);
   const session = asTestSession(
     new Session({
       clientId: "test-client",
@@ -1069,6 +1088,8 @@ test("close_items_request archives agents and kills terminals in one batch", asy
         subscribe: () => () => {},
         listAgents: () => [],
         getAgent: (agentId: string) => (agentId === "agent-1" ? { id: agentId } : null),
+        hasInFlightRun: (agentId: string) => agentId === "agent-1",
+        cancelAgentRun,
         archiveAgent: async () => ({ archivedAt }),
         clearAgentAttention: async () => {},
         notifyAgentState: () => {},
@@ -1148,6 +1169,7 @@ test("close_items_request archives agents and kills terminals in one batch", asy
       mcpBaseUrl: null,
       stt: null,
       tts: null,
+      providerSnapshotManager: createProviderSnapshotManagerStub().manager,
       terminalManager: asTerminalManager({
         killTerminal,
         subscribeTerminalsChanged: () => () => {},
@@ -1161,8 +1183,6 @@ test("close_items_request archives agents and kills terminals in one batch", asy
     isBootstrapping: false,
     pendingUpdatesByAgentId: new Map(),
   };
-  const interruptAgentIfRunning = vi.fn();
-  session.interruptAgentIfRunning = interruptAgentIfRunning;
 
   await session.handleMessage({
     type: "close_items_request",
@@ -1171,7 +1191,7 @@ test("close_items_request archives agents and kills terminals in one batch", asy
     requestId: "req-close-items",
   });
 
-  expect(interruptAgentIfRunning).toHaveBeenCalledWith("agent-1");
+  expect(cancelAgentRun).toHaveBeenCalledWith("agent-1");
   expect(killTerminal).toHaveBeenCalledWith("term-1");
   expect(emitted.find((message) => message.type === "close_items_response")?.payload).toEqual({
     agents: [{ agentId: "agent-1", archivedAt }],
@@ -1240,6 +1260,7 @@ test("close_items_request archives stored agents that are not currently loaded",
         subscribe: () => () => {},
         listAgents: () => [],
         getAgent: (agentId: string) => (agentId === "agent-live" ? { id: agentId } : null),
+        hasInFlightRun: () => false,
         archiveAgent: async (agentId: string) => {
           if (agentId !== "agent-live") {
             throw new Error(`Unexpected live archive: ${agentId}`);
@@ -1337,6 +1358,7 @@ test("close_items_request archives stored agents that are not currently loaded",
       mcpBaseUrl: null,
       stt: null,
       tts: null,
+      providerSnapshotManager: createProviderSnapshotManagerStub().manager,
       terminalManager: null,
     }),
   );
@@ -1347,7 +1369,6 @@ test("close_items_request archives stored agents that are not currently loaded",
     isBootstrapping: false,
     pendingUpdatesByAgentId: new Map(),
   };
-  session.interruptAgentIfRunning = vi.fn();
 
   await session.handleMessage({
     type: "close_items_request",
@@ -1402,6 +1423,7 @@ test("close_items_request continues after an archive failure", async () => {
         listAgents: () => [],
         getAgent: (agentId: string) =>
           agentId === "agent-bad" || agentId === "agent-good" ? { id: agentId } : null,
+        hasInFlightRun: () => false,
         archiveAgent: async (agentId: string) => {
           if (agentId === "agent-bad") {
             throw new Error("archive failed");
@@ -1486,6 +1508,7 @@ test("close_items_request continues after an archive failure", async () => {
       mcpBaseUrl: null,
       stt: null,
       tts: null,
+      providerSnapshotManager: createProviderSnapshotManagerStub().manager,
       terminalManager: asTerminalManager({
         killTerminal: killTerminalBestEffort,
         subscribeTerminalsChanged: () => () => {},
@@ -1499,8 +1522,6 @@ test("close_items_request continues after an archive failure", async () => {
     isBootstrapping: false,
     pendingUpdatesByAgentId: new Map(),
   };
-  const interruptAgentIfRunningBestEffort = vi.fn();
-  session.interruptAgentIfRunning = interruptAgentIfRunningBestEffort;
 
   await session.handleMessage({
     type: "close_items_request",
@@ -1509,8 +1530,6 @@ test("close_items_request continues after an archive failure", async () => {
     requestId: "req-close-best-effort",
   });
 
-  expect(interruptAgentIfRunningBestEffort).toHaveBeenCalledWith("agent-bad");
-  expect(interruptAgentIfRunningBestEffort).toHaveBeenCalledWith("agent-good");
   expect(killTerminalBestEffort).toHaveBeenCalledWith("term-1");
   expect(emitted.find((message) => message.type === "close_items_response")?.payload).toEqual({
     agents: [{ agentId: "agent-good", archivedAt }],
@@ -1903,6 +1922,7 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
       cwd: "/tmp/recent",
       title: "Already stored",
       lastActivityAt: "2026-04-30T12:04:00.000Z",
+      firstPrompt: "stored prompt",
     }),
     makePersistedProviderSession({
       provider: "claude",
@@ -1953,6 +1973,7 @@ test("fetch_recent_provider_sessions_request lists importable provider sessions 
       cwd: "/tmp/recent",
       title: "Already live",
       lastActivityAt: "2026-04-30T12:01:00.000Z",
+      firstPrompt: "live prompt",
     }),
   ];
   // The real AgentManager filters by providerFilter at the fan-out level
@@ -2082,6 +2103,7 @@ test("fetch_recent_provider_sessions_request reports filteredAlreadyImportedCoun
       cwd: "/tmp/recent",
       title: "Already live",
       lastActivityAt: "2026-04-30T12:01:00.000Z",
+      firstPrompt: "live prompt",
     }),
   ];
 
@@ -2353,6 +2375,7 @@ test("workspace update stream keeps persisted workspace visible after agents sto
       mcpBaseUrl: null,
       stt: null,
       tts: null,
+      providerSnapshotManager: createProviderSnapshotManagerStub().manager,
       terminalManager: null,
     }),
   );
@@ -2658,6 +2681,105 @@ test("open_project_request registers a workspace before any agent exists", async
   const response = findByType(emitted, "open_project_response");
   expect(response?.payload.error).toBeNull();
   expect(response?.payload.workspace?.id).toBe(REPO_CWD);
+});
+
+test("import_agent_request registers a workspace for a never-seen cwd", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => {
+      if (isSessionOutboundMessage(message)) emitted.push(message);
+    },
+  });
+  const projects = new Map<string, ReturnType<typeof createPersistedProjectRecord>>();
+  const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();
+  const importedCwd = path.resolve("/tmp/imported-project");
+
+  session.projectRegistry.get = async (projectId: string) => projects.get(projectId) ?? null;
+  session.projectRegistry.upsert = async (
+    record: ReturnType<typeof createPersistedProjectRecord>,
+  ) => {
+    projects.set(record.projectId, record);
+  };
+  session.workspaceRegistry.get = async (workspaceId: string) =>
+    workspaces.get(workspaceId) ?? null;
+  session.workspaceRegistry.upsert = async (
+    record: ReturnType<typeof createPersistedWorkspaceRecord>,
+  ) => {
+    workspaces.set(record.workspaceId, record);
+  };
+  session.projectRegistry.list = async () => Array.from(projects.values());
+  session.workspaceRegistry.list = async () => Array.from(workspaces.values());
+  session.buildProjectPlacement = async (cwd: string) => ({
+    projectKey: cwd,
+    projectName: "imported",
+    checkout: {
+      cwd,
+      isGit: false,
+      currentBranch: null,
+      remoteUrl: null,
+      worktreeRoot: null,
+      isPaseoOwnedWorktree: false,
+      mainRepoRoot: null,
+    },
+  });
+
+  const managed = makeManagedAgent({
+    id: "imported-agent",
+    cwd: importedCwd,
+    lifecycle: "idle",
+    updatedAt: "2026-05-21T00:00:00.000Z",
+  });
+  session.agentManager.listAgents = () => [managed];
+  session.agentManager.findPersistedAgent = async () => null;
+  session.agentManager.resumeAgentFromPersistence = async () => managed;
+  session.agentManager.hydrateTimelineFromProvider = async () => undefined;
+  session.agentManager.getTimeline = () => [];
+  session.agentManager.setTitle = async () => undefined;
+  session.agentStorage.list = async () => [];
+  session.agentStorage.get = async () => null;
+  session.forwardAgentUpdate = async () => undefined;
+
+  session.workspaceUpdatesSubscription = {
+    subscriptionId: "sub-import",
+    filter: undefined,
+    isBootstrapping: false,
+    pendingUpdatesByWorkspaceId: new Map(),
+    lastEmittedByWorkspaceId: new Map(),
+  };
+  session.buildWorkspaceDescriptorMap = async () =>
+    new Map([
+      [
+        importedCwd,
+        {
+          id: importedCwd,
+          projectId: importedCwd,
+          projectDisplayName: "imported-project",
+          projectRootPath: importedCwd,
+          projectKind: "non_git",
+          workspaceKind: "directory",
+          name: "imported-project",
+          status: "done",
+          activityAt: null,
+        },
+      ],
+    ]);
+
+  await session.handleMessage({
+    type: "import_agent_request",
+    requestId: "req-import",
+    providerId: "codex",
+    providerHandleId: "session-xyz",
+    cwd: importedCwd,
+  });
+
+  expect(workspaces.get(importedCwd)).toBeTruthy();
+  const workspaceUpdates = filterByType(emitted, "workspace_update");
+  expect(workspaceUpdates.length).toBeGreaterThan(0);
+  expect(
+    workspaceUpdates.some(
+      (update) => update.payload.kind === "upsert" && update.payload.workspace.id === importedCwd,
+    ),
+  ).toBe(true);
 });
 
 test("open_project_response returns immediately even when the GitHub fetch is slow", async () => {

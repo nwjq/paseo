@@ -5,6 +5,7 @@ import {
   extractCodexShellOutput,
   flattenReadContent as flattenToolReadContent,
   nonEmptyString,
+  stripReadLineNumberGutter,
   truncateDiffText,
 } from "./tool-call-mapper-utils.js";
 
@@ -260,8 +261,69 @@ function flattenReadContent(
   return flattenToolReadContent(value);
 }
 
+function readXmlTag(value: string, tagName: "path" | "content"): string | undefined {
+  const match = value.match(new RegExp(`<${tagName}>([\\s\\S]*?)</${tagName}>`, "i"));
+  return match?.[1];
+}
+
+function decodeXmlText(value: string): string {
+  return value.replace(
+    /&(?:#(\d+)|#x([0-9a-fA-F]+)|amp|lt|gt|quot|apos);/g,
+    (entity, decimal, hex) => {
+      if (decimal) {
+        return String.fromCodePoint(Number.parseInt(decimal, 10));
+      }
+      if (hex) {
+        return String.fromCodePoint(Number.parseInt(hex, 16));
+      }
+      switch (entity) {
+        case "&amp;":
+          return "&";
+        case "&lt;":
+          return "<";
+        case "&gt;":
+          return ">";
+        case "&quot;":
+          return '"';
+        case "&apos;":
+          return "'";
+        default:
+          return entity;
+      }
+    },
+  );
+}
+
+function trimOuterLineBreaks(value: string): string {
+  return value.replace(/^\r?\n/, "").replace(/\r?\n$/, "");
+}
+
+function parseXmlReadOutput(value: string): ToolReadOutputValue | undefined {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("<path>") || !/<content>/i.test(trimmed)) {
+    return undefined;
+  }
+
+  const filePath = nonEmptyString(readXmlTag(trimmed, "path")?.trim());
+  const content = readXmlTag(trimmed, "content");
+  if (!filePath && content === undefined) {
+    return undefined;
+  }
+
+  return {
+    filePath: filePath ? decodeXmlText(filePath) : undefined,
+    content: content === undefined ? undefined : decodeXmlText(trimOuterLineBreaks(content)),
+  };
+}
+
 const ToolReadOutputContentSchema = z.union([
-  z.string().transform((value) => ({ filePath: undefined, content: nonEmptyString(value) })),
+  z.string().transform((value) => {
+    const xmlReadOutput = parseXmlReadOutput(value);
+    if (xmlReadOutput) {
+      return xmlReadOutput;
+    }
+    return { filePath: undefined, content: nonEmptyString(value) };
+  }),
   ToolReadChunkSchema.transform((value) => ({
     filePath: undefined,
     content: flattenReadContent(value),
@@ -387,6 +449,10 @@ export const ToolWriteInputSchema = z
   }));
 
 export const ToolWriteOutputSchema = z.union([
+  z.string().transform(() => ({
+    filePath: undefined,
+    content: undefined,
+  })),
   z.intersection(ToolPathInputSchema, ToolWriteContentSchema).transform((value) => ({
     filePath: value.filePath,
     content:
@@ -711,11 +777,15 @@ export function toReadToolDetail(
     return undefined;
   }
 
+  const stripped = output?.content ? stripReadLineNumberGutter(output.content) : undefined;
+  const content = stripped?.content ?? output?.content;
+  const offset = input?.offset ?? stripped?.startLine;
+
   return {
     type: "read",
     filePath,
-    ...(output?.content ? { content: output.content } : {}),
-    ...(input?.offset !== undefined ? { offset: input.offset } : {}),
+    ...(content ? { content } : {}),
+    ...(offset !== undefined ? { offset } : {}),
     ...(input?.limit !== undefined ? { limit: input.limit } : {}),
   };
 }

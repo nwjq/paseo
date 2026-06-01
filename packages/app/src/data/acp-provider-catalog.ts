@@ -145,6 +145,15 @@ const CATALOG_DATA = [
     command: ["deepseek", "serve", "--acp"],
   },
   {
+    id: "devin",
+    title: "Devin CLI",
+    description: "Cognition's Devin for Terminal via Agent Client Protocol",
+    version: "manual",
+    iconId: null,
+    installLink: "https://cli.devin.ai/docs",
+    command: ["devin", "acp"],
+  },
+  {
     id: "dimcode",
     title: "DimCode",
     description: "A coding agent that puts leading models at your command.",
@@ -221,6 +230,16 @@ const CATALOG_DATA = [
     iconId: "goose",
     installLink: "https://block.github.io/goose/",
     command: ["goose", "acp"],
+  },
+  {
+    id: "grok",
+    title: "Grok",
+    description:
+      "xAI's Grok Build agentic coding CLI with plan mode and parallel subagents. Requires a SuperGrok or X Premium+ subscription.",
+    version: "0.2.11",
+    iconId: "grok",
+    installLink: "https://docs.x.ai/build/overview",
+    command: ["grok", "agent", "stdio"],
   },
   {
     id: "hermes",

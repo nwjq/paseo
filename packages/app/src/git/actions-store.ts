@@ -1,5 +1,5 @@
 import type { QueryKey } from "@tanstack/react-query";
-import type { CheckoutPrMergeMethod } from "@server/shared/messages";
+import type { CheckoutPrMergeMethod } from "@getpaseo/protocol/messages";
 import { create } from "zustand";
 import { queryClient as appQueryClient } from "@/query/query-client";
 import {
@@ -28,6 +28,7 @@ export type CheckoutGitAsyncActionId =
   | "pull"
   | "push"
   | "pull-and-push"
+  | "refresh"
   | "create-pr"
   | "merge-pr-squash"
   | "merge-pr-merge"
@@ -236,6 +237,7 @@ interface CheckoutGitActionsStoreState {
   pull: (params: { serverId: string; cwd: string }) => Promise<void>;
   push: (params: { serverId: string; cwd: string }) => Promise<void>;
   pullAndPush: (params: { serverId: string; cwd: string }) => Promise<void>;
+  refresh: (params: { serverId: string; cwd: string }) => Promise<void>;
   createPr: (params: { serverId: string; cwd: string }) => Promise<void>;
   mergePr: (params: {
     serverId: string;
@@ -353,6 +355,21 @@ export const useCheckoutGitActionsStore = create<CheckoutGitActionsStoreState>()
       run: async () => {
         const client = resolveClient(serverId);
         const payload = await client.checkoutPush(cwd);
+        if (payload.error) {
+          throw new Error(payload.error.message);
+        }
+      },
+    });
+  },
+
+  refresh: async ({ serverId, cwd }) => {
+    await runCheckoutAction({
+      serverId,
+      cwd,
+      actionId: "refresh",
+      run: async () => {
+        const client = resolveClient(serverId);
+        const payload = await client.checkoutRefresh(cwd);
         if (payload.error) {
           throw new Error(payload.error.message);
         }

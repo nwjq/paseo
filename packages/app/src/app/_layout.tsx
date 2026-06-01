@@ -28,8 +28,10 @@ import { QuittingOverlay } from "@/components/quitting-overlay";
 import { KeyboardShortcutsDialog } from "@/components/keyboard-shortcuts-dialog";
 import { LeftSidebar } from "@/components/left-sidebar";
 import { ProjectPickerModal } from "@/components/project-picker-modal";
+import { ProviderSettingsHost } from "@/components/provider-settings-host";
 import { WorkspaceSetupDialog } from "@/components/workspace-setup-dialog";
 import { WorkspaceShortcutTargetsSubscriber } from "@/components/workspace-shortcut-targets-subscriber";
+import { FloatingPanelPortalHost } from "@/components/ui/floating-panel-portal";
 import { getIsElectronRuntime, useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import {
@@ -71,6 +73,7 @@ import {
   useHosts,
 } from "@/runtime/host-runtime";
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
+import { applyAppearance } from "@/screens/settings/appearance/apply-appearance";
 import { usePanelStore } from "@/stores/panel-store";
 import { THEME_TO_UNISTYLES, type ThemeName } from "@/styles/theme";
 import type { HostProfile } from "@/types/host-connection";
@@ -457,6 +460,7 @@ function AppContainer({
         )}
         <View style={flexStyle}>{children}</View>
       </View>
+      <FloatingPanelPortalHost />
       {isCompactLayout && chromeEnabled && <LeftSidebar selectedAgentId={selectedAgentId} />}
       <DownloadToast />
       <RosettaCalloutSource />
@@ -464,6 +468,7 @@ function AppContainer({
       <WorktreeSetupCalloutSource />
       <CommandCenter />
       <ProjectPickerModal />
+      <ProviderSettingsHost />
       <WorkspaceShortcutTargetsSubscriber
         enabled={keyboardShortcutsEnabled}
         serverId={activeServerId}
@@ -620,6 +625,27 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
       UnistylesRuntime.setTheme(THEME_TO_UNISTYLES[settings.theme]);
     }
   }, [settingsLoading, settings.theme]);
+
+  // Apply font / size / syntax appearance settings on mount and when they change.
+  // Sibling to the theme effect above; order is irrelevant because both patch all
+  // six registered theme keys, so the active key is always current.
+  useEffect(() => {
+    if (settingsLoading) return;
+    applyAppearance({
+      uiFontFamily: settings.uiFontFamily,
+      monoFontFamily: settings.monoFontFamily,
+      uiFontSize: settings.uiFontSize,
+      codeFontSize: settings.codeFontSize,
+      syntaxTheme: settings.syntaxTheme,
+    });
+  }, [
+    settingsLoading,
+    settings.uiFontFamily,
+    settings.monoFontFamily,
+    settings.uiFontSize,
+    settings.codeFontSize,
+    settings.syntaxTheme,
+  ]);
 
   return (
     <VoiceProvider>
@@ -863,7 +889,8 @@ function RootStack() {
       <Stack.Screen name="h/[serverId]/sessions" />
       <Stack.Screen name="h/[serverId]/open-project" />
       <Stack.Screen name="h/[serverId]/settings" />
-      <Stack.Screen name="settings/hosts/[serverId]" />
+      <Stack.Screen name="settings/hosts/[serverId]/index" />
+      <Stack.Screen name="settings/hosts/[serverId]/[hostSection]" />
     </Stack>
   );
 }

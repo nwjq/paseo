@@ -6,13 +6,20 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 interface ContextWindowMeterProps {
   maxTokens: number;
   usedTokens: number;
+  totalCostUsd?: number | null;
+  showPercentage?: boolean;
 }
 
 const SVG_SIZE = 16;
+const COMPACT_SVG_SIZE = 14;
 const CENTER = SVG_SIZE / 2;
+const COMPACT_CENTER = COMPACT_SVG_SIZE / 2;
 const RADIUS = 7;
+const COMPACT_RADIUS = 6;
 const STROKE_WIDTH = 2.25;
+const COMPACT_STROKE_WIDTH = 2;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
+const COMPACT_CIRCUMFERENCE = 2 * Math.PI * COMPACT_RADIUS;
 
 function isValidMaxTokens(value: number): boolean {
   return Number.isFinite(value) && value > 0;
@@ -43,6 +50,16 @@ function formatTokenCount(value: number): string {
   return Math.round(value).toString();
 }
 
+function formatSessionCost(value: number): string | null {
+  if (!Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+  if (value < 0.01) {
+    return `$${value.toFixed(4)}`;
+  }
+  return `$${value.toFixed(2)}`;
+}
+
 function getMeterColors(
   percentage: number,
   theme: ReturnType<typeof useUnistyles>["theme"],
@@ -57,7 +74,12 @@ function getMeterColors(
   return { progress: theme.colors.foregroundMuted, track };
 }
 
-export function ContextWindowMeter({ maxTokens, usedTokens }: ContextWindowMeterProps) {
+export function ContextWindowMeter({
+  maxTokens,
+  usedTokens,
+  totalCostUsd,
+  showPercentage = false,
+}: ContextWindowMeterProps) {
   const { theme } = useUnistyles();
   const percentage = getUsagePercentage(maxTokens, usedTokens);
 
@@ -67,45 +89,56 @@ export function ContextWindowMeter({ maxTokens, usedTokens }: ContextWindowMeter
 
   const clampedPercentage = clampPercentage(percentage);
   const roundedPercentage = Math.round(percentage);
-  const dashOffset = CIRCUMFERENCE - (clampedPercentage / 100) * CIRCUMFERENCE;
+  const svgSize = showPercentage ? COMPACT_SVG_SIZE : SVG_SIZE;
+  const center = showPercentage ? COMPACT_CENTER : CENTER;
+  const radius = showPercentage ? COMPACT_RADIUS : RADIUS;
+  const strokeWidth = showPercentage ? COMPACT_STROKE_WIDTH : STROKE_WIDTH;
+  const circumference = showPercentage ? COMPACT_CIRCUMFERENCE : CIRCUMFERENCE;
+  const dashOffset = circumference - (clampedPercentage / 100) * circumference;
   const colors = getMeterColors(clampedPercentage, theme);
+  const formattedSessionCost =
+    typeof totalCostUsd === "number" ? formatSessionCost(totalCostUsd) : null;
+  const containerStyle = showPercentage ? styles.containerWithLabel : styles.container;
 
   return (
     <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile>
       <TooltipTrigger asChild triggerRefProp="ref">
         <Pressable
-          style={styles.container}
+          style={containerStyle}
           accessibilityRole="image"
           accessibilityLabel={`Context window ${roundedPercentage}% used`}
         >
           <Svg
-            width={SVG_SIZE}
-            height={SVG_SIZE}
-            viewBox={`0 0 ${SVG_SIZE} ${SVG_SIZE}`}
+            width={svgSize}
+            height={svgSize}
+            viewBox={`0 0 ${svgSize} ${svgSize}`}
             style={styles.svg}
             accessibilityElementsHidden
             importantForAccessibility="no-hide-descendants"
           >
             <Circle
-              cx={CENTER}
-              cy={CENTER}
-              r={RADIUS}
+              cx={center}
+              cy={center}
+              r={radius}
               fill="none"
               stroke={colors.track}
-              strokeWidth={STROKE_WIDTH}
+              strokeWidth={strokeWidth}
             />
             <Circle
-              cx={CENTER}
-              cy={CENTER}
-              r={RADIUS}
+              cx={center}
+              cy={center}
+              r={radius}
               fill="none"
               stroke={colors.progress}
-              strokeWidth={STROKE_WIDTH}
+              strokeWidth={strokeWidth}
               strokeLinecap="round"
-              strokeDasharray={CIRCUMFERENCE}
+              strokeDasharray={circumference}
               strokeDashoffset={dashOffset}
             />
           </Svg>
+          {showPercentage ? (
+            <Text style={styles.percentageLabel}>{`${roundedPercentage}%`}</Text>
+          ) : null}
         </Pressable>
       </TooltipTrigger>
       <TooltipContent side="top" align="center" offset={8}>
@@ -115,6 +148,9 @@ export function ContextWindowMeter({ maxTokens, usedTokens }: ContextWindowMeter
           <Text
             style={styles.tooltipDetail}
           >{`${formatTokenCount(usedTokens)} / ${formatTokenCount(maxTokens)} tokens`}</Text>
+          {formattedSessionCost ? (
+            <Text style={styles.tooltipDetail}>{`Session cost ${formattedSessionCost}`}</Text>
+          ) : null}
         </View>
       </TooltipContent>
     </Tooltip>
@@ -129,8 +165,21 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
   },
+  containerWithLabel: {
+    height: 28,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing[1],
+    borderRadius: theme.borderRadius.full,
+  },
   svg: {
     transform: [{ rotate: "-90deg" }],
+  },
+  percentageLabel: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
   },
   tooltipContent: {
     gap: theme.spacing[1],

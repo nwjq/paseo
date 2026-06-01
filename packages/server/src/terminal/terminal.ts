@@ -8,8 +8,8 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { writePrivateFileAtomicSync } from "../server/private-files.js";
-import type { TerminalCell, TerminalState } from "../shared/messages.js";
-import { TerminalInputModeTracker } from "../shared/terminal-input-mode.js";
+import type { TerminalCell, TerminalState } from "@getpaseo/protocol/messages";
+import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 
 const { Terminal } = xterm;
 const require = createRequire(import.meta.url);
@@ -17,6 +17,11 @@ let nodePtySpawnHelperChecked = false;
 const TERMINAL_TITLE_DEBOUNCE_MS = 150;
 const TERMINAL_EXIT_OUTPUT_LINE_LIMIT = 12;
 const TERMINAL_EXIT_OUTPUT_CHAR_LIMIT = 16000;
+const TERMINAL_OSC_COLOR_QUERY_RESPONSES = new Map<number, string>([
+  [10, "rgb:e6e6/e6e6/e6e6"],
+  [11, "rgb:0b0b/0b0b/0b0b"],
+  [12, "rgb:e6e6/e6e6/e6e6"],
+]);
 
 export interface TerminalExitInfo {
   exitCode: number | null;
@@ -33,6 +38,18 @@ export interface TerminalStateSnapshot {
   revision: number;
 }
 
+export interface TerminalStateSnapshotOptions {
+  scrollbackLines?: number;
+  // Include per-row soft-wrap flags (gridWrapped/scrollbackWrapped) so the client
+  // can reflow restored content on resize. Gated on a client capability, so old
+  // clients never receive the extra fields.
+  includeWrapFlags?: boolean;
+}
+
+export interface TerminalSubscribeOptions {
+  initialSnapshot?: "state" | "ready";
+}
+
 export type ClientMessage =
   | { type: "input"; data: string }
   | { type: "resize"; rows: number; cols: number }
@@ -41,6 +58,7 @@ export type ClientMessage =
 export type ServerMessage =
   | { type: "output"; data: string; revision?: number }
   | { type: "snapshot"; state: TerminalState; revision?: number }
+  | { type: "snapshotReady"; revision?: number }
   | { type: "titleChange"; title?: string };
 
 export interface TerminalSession {
@@ -48,13 +66,13 @@ export interface TerminalSession {
   name: string;
   cwd: string;
   send(msg: ClientMessage): void;
-  subscribe(listener: (msg: ServerMessage) => void): () => void;
+  subscribe(listener: (msg: ServerMessage) => void, options?: TerminalSubscribeOptions): () => void;
   onExit(listener: (info: TerminalExitInfo) => void): () => void;
   onCommandFinished(listener: (info: TerminalCommandFinishedInfo) => void): () => void;
   onTitleChange(listener: (title?: string) => void): () => void;
   getSize(): { rows: number; cols: number };
   getState(): TerminalState;
-  getStateSnapshot(): TerminalStateSnapshot;
+  getStateSnapshot(options?: TerminalStateSnapshotOptions): TerminalStateSnapshot;
   getReplayPreamble(): string;
   getTitle(): string | undefined;
   setTitle(title: string): void;
@@ -292,14 +310,21 @@ function extractGrid(terminal: TerminalType): TerminalCell[][] {
   return grid;
 }
 
-function extractScrollback(terminal: TerminalType): TerminalCell[][] {
+function extractScrollback(
+  terminal: TerminalType,
+  options?: { scrollbackLines?: number },
+): TerminalCell[][] {
   const scrollback: TerminalCell[][] = [];
   const buffer = terminal.buffer.active;
   // baseY is the first row of the visible viewport (0-indexed)
   // Lines 0 to baseY-1 are in scrollback, lines baseY onwards are visible
   const scrollbackLines = buffer.baseY;
+  const startRow =
+    typeof options?.scrollbackLines === "number"
+      ? Math.max(0, scrollbackLines - options.scrollbackLines)
+      : 0;
 
-  for (let row = 0; row < scrollbackLines; row++) {
+  for (let row = startRow; row < scrollbackLines; row++) {
     const rowCells: TerminalCell[] = [];
     const line = buffer.getLine(row);
     for (let col = 0; col < terminal.cols; col++) {
@@ -336,6 +361,39 @@ function extractScrollback(terminal: TerminalType): TerminalCell[][] {
   }
 
   return scrollback;
+}
+
+// xterm marks a line `isWrapped` when it is a continuation of the PREVIOUS line.
+// The snapshot carries the inverse, tmux-style flag — "this row continues onto the
+// next row" — so the client can rejoin and reflow logical lines. So row y's flag is
+// whether line y+1 is a wrapped continuation.
+function lineContinuesToNext(terminal: TerminalType, absoluteRow: number): boolean {
+  return terminal.buffer.active.getLine(absoluteRow + 1)?.isWrapped === true;
+}
+
+function extractGridWrapped(terminal: TerminalType): boolean[] {
+  const baseY = terminal.buffer.active.baseY;
+  const wrapped: boolean[] = [];
+  for (let row = 0; row < terminal.rows; row++) {
+    wrapped.push(lineContinuesToNext(terminal, baseY + row));
+  }
+  return wrapped;
+}
+
+function extractScrollbackWrapped(
+  terminal: TerminalType,
+  options?: { scrollbackLines?: number },
+): boolean[] {
+  const scrollbackLines = terminal.buffer.active.baseY;
+  const startRow =
+    typeof options?.scrollbackLines === "number"
+      ? Math.max(0, scrollbackLines - options.scrollbackLines)
+      : 0;
+  const wrapped: boolean[] = [];
+  for (let row = startRow; row < scrollbackLines; row++) {
+    wrapped.push(lineContinuesToNext(terminal, row));
+  }
+  return wrapped;
 }
 
 function extractCursorState(terminal: TerminalType): TerminalState["cursor"] {
@@ -665,6 +723,15 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     ptyProcess.write(`\x1b[?${buffer.cursorY + 1};${buffer.cursorX + 1}R`);
     return true;
   });
+  for (const [code, response] of TERMINAL_OSC_COLOR_QUERY_RESPONSES) {
+    terminal.parser.registerOscHandler(code, (data) => {
+      if (data.trim() !== "?") {
+        return false;
+      }
+      ptyProcess.write(`\x1b]${code};${response}\x1b\\`);
+      return true;
+    });
+  }
 
   if (titleMode === "auto") {
     titleChangeSubscription = terminal.onTitleChange((nextTitle) => {
@@ -813,20 +880,30 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     }
   }
 
-  function getState(): TerminalState {
+  function getState(snapshotOptions?: TerminalStateSnapshotOptions): TerminalState {
     return {
       rows: terminal.rows,
       cols: terminal.cols,
       grid: extractGrid(terminal),
-      scrollback: extractScrollback(terminal),
+      scrollback: extractScrollback(terminal, {
+        scrollbackLines: snapshotOptions?.scrollbackLines,
+      }),
       cursor: extractCursorState(terminal),
       ...(title ? { title } : {}),
+      ...(snapshotOptions?.includeWrapFlags
+        ? {
+            gridWrapped: extractGridWrapped(terminal),
+            scrollbackWrapped: extractScrollbackWrapped(terminal, {
+              scrollbackLines: snapshotOptions?.scrollbackLines,
+            }),
+          }
+        : {}),
     };
   }
 
-  function getStateSnapshot(): TerminalStateSnapshot {
+  function getStateSnapshot(snapshotOptions?: TerminalStateSnapshotOptions): TerminalStateSnapshot {
     return {
-      state: getState(),
+      state: getState(snapshotOptions),
       revision: stateRevision,
     };
   }
@@ -891,10 +968,14 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     }
   }
 
-  function subscribe(listener: (msg: ServerMessage) => void): () => void {
+  function subscribe(
+    listener: (msg: ServerMessage) => void,
+    subscribeOptions?: TerminalSubscribeOptions,
+  ): () => void {
     let active = true;
     let snapshotDelivered = false;
     const queuedMessages: ServerMessage[] = [];
+    const initialSnapshot = subscribeOptions?.initialSnapshot ?? "state";
     const subscriptionListener = (msg: ServerMessage): void => {
       if (!active) {
         return;
@@ -911,7 +992,11 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     terminal.write("", () => {
       if (!disposed && active && listeners.has(subscriptionListener)) {
         snapshotDelivered = true;
-        listener({ type: "snapshot", ...getStateSnapshot() });
+        if (initialSnapshot === "ready") {
+          listener({ type: "snapshotReady", revision: stateRevision });
+        } else {
+          listener({ type: "snapshot", ...getStateSnapshot() });
+        }
         for (const message of queuedMessages.splice(0)) {
           listener(message);
         }

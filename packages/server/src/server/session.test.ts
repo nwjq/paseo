@@ -2,23 +2,18 @@ import { execSync } from "child_process";
 import { EventEmitter } from "events";
 import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { homedir, tmpdir } from "os";
-import { join } from "path";
+import { join, resolve as resolvePath } from "path";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
-import type { WorkspaceDescriptorPayload } from "../shared/messages.js";
-import { decodeFileTransferFrame, FileTransferOpcode } from "../shared/binary-frames/index.js";
+import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
+import {
+  decodeFileTransferFrame,
+  FileTransferOpcode,
+} from "@getpaseo/protocol/binary-frames/index";
 import { Session } from "./session.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
-import type {
-  AgentClient,
-  AgentMode,
-  AgentModelDefinition,
-  ListModesOptions,
-  ListModelsOptions,
-} from "./agent/agent-sdk-types.js";
-import type { ProviderDefinition } from "./agent/provider-registry.js";
-import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
+import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type { SessionOptions } from "./session.js";
 import type {
   SpeechToTextProvider,
@@ -68,6 +63,7 @@ interface SessionHandlerInternals {
   handleCheckoutGithubSetAutoMergeRequest(params: unknown): Promise<unknown>;
   handleCheckoutPullRequest(params: unknown): Promise<unknown>;
   handleCheckoutPushRequest(params: unknown): Promise<unknown>;
+  handleCheckoutRefreshRequest(params: unknown): Promise<unknown>;
   handleCheckoutStatusRequest(params: unknown): Promise<unknown>;
   describeWorkspaceRecord(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
   describeWorkspaceRecordWithGitData(...args: unknown[]): Promise<WorkspaceDescriptorPayload>;
@@ -80,7 +76,6 @@ interface SessionHandlerInternals {
   handleStashPopRequest(params: unknown): Promise<unknown>;
   createPaseoWorktree(params: unknown): Promise<unknown>;
   handleStartWorkspaceScriptRequest(params: unknown): Promise<unknown>;
-  getProviderRegistry(): unknown;
   sttManager: {
     transcribe(audio: Buffer, format: string): Promise<unknown>;
   };
@@ -138,46 +133,6 @@ interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T) => void;
   reject: (reason?: unknown) => void;
-}
-
-const TEST_CAPABILITIES = {
-  supportsStreaming: false,
-  supportsSessionPersistence: false,
-  supportsDynamicModes: false,
-  supportsMcpServers: false,
-  supportsReasoningStream: false,
-  supportsToolInvocations: false,
-} as const;
-
-function createTestProviderDefinition(overrides?: Partial<ProviderDefinition>): ProviderDefinition {
-  return {
-    id: "codex",
-    label: "Codex",
-    description: "Codex test provider",
-    enabled: true,
-    defaultModeId: null,
-    modes: [],
-    createClient: () =>
-      ({
-        provider: "codex",
-        capabilities: TEST_CAPABILITIES,
-        async createSession() {
-          throw new Error("not implemented");
-        },
-        async resumeSession() {
-          throw new Error("not implemented");
-        },
-        async listModels() {
-          return [];
-        },
-        async isAvailable() {
-          return true;
-        },
-      }) satisfies AgentClient,
-    fetchModels: async () => [],
-    fetchModes: async () => [],
-    ...overrides,
-  };
 }
 
 function deferred<T>(): Deferred<T> {
@@ -354,7 +309,8 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     stt: options.stt ?? null,
     tts: null,
     terminalManager: options.terminalManager ?? null,
-    providerSnapshotManager: options.providerSnapshotManager,
+    providerSnapshotManager:
+      options.providerSnapshotManager ?? createProviderSnapshotManagerStub().manager,
     scriptRouteStore: options.scriptRouteStore,
     scriptRuntimeStore: options.scriptRuntimeStore,
     getDaemonTcpPort: options.getDaemonTcpPort,
@@ -986,17 +942,36 @@ describe("session provider refresh cwd routing", () => {
     expect(refreshSettingsSnapshot).not.toHaveBeenCalled();
   });
 
+  test("get_providers_snapshot_request forwards cwd to the provider authority", async () => {
+    const messages: unknown[] = [];
+    const workspaceCwd = resolvePath("/tmp/session-provider-snapshot");
+    const { manager: providerSnapshotManager, getSnapshot } = createProviderSnapshotManagerStub();
+    const session = createSessionForTest({ messages, providerSnapshotManager });
+
+    await session.handleMessage({
+      type: "get_providers_snapshot_request",
+      cwd: workspaceCwd,
+      requestId: "snapshot-workspace",
+    });
+
+    expect(getSnapshot).toHaveBeenCalledWith(workspaceCwd);
+  });
+
   test("normalizes legacy model and mode list requests without cwd to home", async () => {
     const messages: unknown[] = [];
-    const session = createSessionForTest({ messages });
-    const fetchModels = vi.fn(async () => []);
-    const fetchModes = vi.fn(async () => []);
-    asSessionInternals(session).getProviderRegistry = () => ({
-      codex: createTestProviderDefinition({
-        fetchModels,
-        fetchModes,
-      }),
-    });
+    const {
+      manager: providerSnapshotManager,
+      getSnapshot,
+      warmUpSnapshotForCwd,
+    } = createProviderSnapshotManagerStub();
+    getSnapshot.mockReturnValue([
+      {
+        provider: "codex",
+        status: "loading",
+        enabled: true,
+      },
+    ]);
+    const session = createSessionForTest({ messages, providerSnapshotManager });
 
     await session.handleMessage({
       type: "list_provider_models_request",
@@ -1009,8 +984,11 @@ describe("session provider refresh cwd routing", () => {
       requestId: "modes-home",
     });
 
-    expect(fetchModels).toHaveBeenCalledWith({ cwd: homedir(), force: false });
-    expect(fetchModes).toHaveBeenCalledWith({ cwd: homedir(), force: false });
+    expect(getSnapshot).toHaveBeenCalledWith(homedir());
+    expect(warmUpSnapshotForCwd).toHaveBeenCalledWith({
+      cwd: homedir(),
+      providers: ["codex"],
+    });
   });
 
   test("legacy model list request treats disabled snapshot entries as unavailable without warming", async () => {
@@ -1075,104 +1053,33 @@ describe("session provider refresh cwd routing", () => {
     });
   });
 
-  test("legacy model and mode list fallback treats disabled registry definitions as unavailable without fetching", async () => {
+  test("list_provider_models_request awaits warmup and emits ready models", async () => {
     const messages: unknown[] = [];
-    const session = createSessionForTest({ messages });
-    const fetchModels = vi.fn(async () => [
+    const warmupDeferred = deferred<void>();
+    const {
+      manager: providerSnapshotManager,
+      getSnapshot,
+      warmUpSnapshotForCwd,
+    } = createProviderSnapshotManagerStub();
+    getSnapshot.mockReturnValueOnce([
       {
-        provider: "codex" as const,
-        id: "should-not-fetch",
-        label: "Should not fetch",
+        provider: "codex",
+        status: "loading",
+        enabled: true,
       },
     ]);
-    const fetchModes = vi.fn(async () => [
+    getSnapshot.mockReturnValue([
       {
-        id: "should-not-fetch",
-        label: "Should not fetch",
+        provider: "codex",
+        status: "ready",
+        enabled: true,
+        models: [{ provider: "codex", id: "gpt-5.4", label: "GPT-5.4" }],
+        modes: [],
+        fetchedAt: "2026-05-28T00:00:00.000Z",
       },
     ]);
-    asSessionInternals(session).getProviderRegistry = () => ({
-      codex: createTestProviderDefinition({
-        enabled: false,
-        fetchModels,
-        fetchModes,
-      }),
-    });
-
-    await session.handleMessage({
-      type: "list_provider_models_request",
-      provider: "codex",
-      requestId: "fallback-models-disabled",
-    });
-    await session.handleMessage({
-      type: "list_provider_modes_request",
-      provider: "codex",
-      requestId: "fallback-modes-disabled",
-    });
-
-    expect(fetchModels).not.toHaveBeenCalled();
-    expect(fetchModes).not.toHaveBeenCalled();
-    expect(messages).toContainEqual({
-      type: "list_provider_models_response",
-      payload: {
-        provider: "codex",
-        error: "Provider codex is disabled",
-        fetchedAt: expect.any(String),
-        requestId: "fallback-models-disabled",
-      },
-    });
-    expect(messages).toContainEqual({
-      type: "list_provider_modes_response",
-      payload: {
-        provider: "codex",
-        error: "Provider codex is disabled",
-        fetchedAt: expect.any(String),
-        requestId: "fallback-modes-disabled",
-      },
-    });
-  });
-
-  test("legacy model list request without cwd awaits loading snapshot without forced discovery", async () => {
-    const messages: unknown[] = [];
-    const models = deferred<AgentModelDefinition[]>();
-    const fetchModels = vi.fn(
-      async (options: ListModelsOptions): Promise<AgentModelDefinition[]> => {
-        expect(options.cwd).toBe(homedir());
-        return models.promise;
-      },
-    );
-    const fetchModes = vi.fn(async (_options: ListModesOptions): Promise<AgentMode[]> => []);
-    const providerDefinition = createTestProviderDefinition({
-      createClient: () =>
-        ({
-          provider: "codex",
-          capabilities: TEST_CAPABILITIES,
-          async createSession() {
-            throw new Error("not implemented");
-          },
-          async resumeSession() {
-            throw new Error("not implemented");
-          },
-          async listModels(options: ListModelsOptions) {
-            return fetchModels(options);
-          },
-          async isAvailable() {
-            return true;
-          },
-        }) satisfies AgentClient,
-      fetchModels,
-      fetchModes,
-    });
-    const providerSnapshotManager = new ProviderSnapshotManager(
-      { codex: providerDefinition },
-      pino({ level: "silent" }),
-    );
+    warmUpSnapshotForCwd.mockReturnValue(warmupDeferred.promise);
     const session = createSessionForTest({ messages, providerSnapshotManager });
-
-    providerSnapshotManager.getSnapshot();
-    await vi.waitFor(() => {
-      expect(fetchModels).toHaveBeenCalledTimes(1);
-    });
 
     const responsePromise = session.handleMessage({
       type: "list_provider_models_request",
@@ -1180,23 +1087,13 @@ describe("session provider refresh cwd routing", () => {
       requestId: "models-loading-home",
     });
 
-    await Promise.resolve();
-
-    expect(fetchModels).toHaveBeenCalledTimes(1);
-    expect(fetchModels).toHaveBeenCalledWith({ cwd: homedir(), force: false });
-    expect(fetchModels).not.toHaveBeenCalledWith({ cwd: homedir(), force: true });
-
-    models.resolve([
-      {
-        provider: "codex",
-        id: "gpt-5.4",
-        label: "GPT-5.4",
-      },
-    ]);
+    expect(warmUpSnapshotForCwd).toHaveBeenCalledWith({
+      cwd: homedir(),
+      providers: ["codex"],
+    });
+    warmupDeferred.resolve();
     await responsePromise;
 
-    expect(fetchModels).toHaveBeenCalledTimes(1);
-    expect(fetchModels).not.toHaveBeenCalledWith({ cwd: homedir(), force: true });
     expect(messages).toContainEqual({
       type: "list_provider_models_response",
       payload: {
@@ -1209,12 +1106,10 @@ describe("session provider refresh cwd routing", () => {
           },
         ],
         error: null,
-        fetchedAt: expect.any(String),
+        fetchedAt: "2026-05-28T00:00:00.000Z",
         requestId: "models-loading-home",
       },
     });
-
-    providerSnapshotManager.destroy();
   });
 });
 
@@ -2655,6 +2550,76 @@ describe("session checkout pull and push handling", () => {
         success: true,
         error: null,
         requestId: "request-push",
+      },
+    });
+  });
+});
+
+describe("session checkout refresh handling", () => {
+  test("forces a git, GitHub, and diff refresh on demand", async () => {
+    const messages: unknown[] = [];
+    const github = { invalidate: vi.fn() };
+    const workspaceGitService = { getSnapshot: vi.fn().mockResolvedValue({}) };
+    const checkoutDiffManager = { scheduleRefreshForCwd: vi.fn() };
+    const session = createSessionForTest({
+      github,
+      workspaceGitService,
+      checkoutDiffManager,
+      messages,
+    });
+
+    await asSessionInternals(session).handleCheckoutRefreshRequest({
+      type: "checkout.refresh.request",
+      cwd: "/tmp/request-worktree",
+      requestId: "request-refresh",
+    });
+
+    expect(github.invalidate).toHaveBeenCalledWith({ cwd: "/tmp/request-worktree" });
+    expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/request-worktree", {
+      force: true,
+      includeGitHub: true,
+      reason: "manual-refresh",
+    });
+    expect(checkoutDiffManager.scheduleRefreshForCwd).toHaveBeenCalledWith("/tmp/request-worktree");
+    expect(messages).toContainEqual({
+      type: "checkout.refresh.response",
+      payload: {
+        cwd: "/tmp/request-worktree",
+        success: true,
+        error: null,
+        requestId: "request-refresh",
+      },
+    });
+  });
+
+  test("reports an error when the snapshot refresh fails", async () => {
+    const messages: unknown[] = [];
+    const github = { invalidate: vi.fn() };
+    const workspaceGitService = {
+      getSnapshot: vi.fn().mockRejectedValue(new Error("not a git repository")),
+    };
+    const checkoutDiffManager = { scheduleRefreshForCwd: vi.fn() };
+    const session = createSessionForTest({
+      github,
+      workspaceGitService,
+      checkoutDiffManager,
+      messages,
+    });
+
+    await asSessionInternals(session).handleCheckoutRefreshRequest({
+      type: "checkout.refresh.request",
+      cwd: "/tmp/request-worktree",
+      requestId: "request-refresh-error",
+    });
+
+    expect(checkoutDiffManager.scheduleRefreshForCwd).not.toHaveBeenCalled();
+    expect(messages).toContainEqual({
+      type: "checkout.refresh.response",
+      payload: {
+        cwd: "/tmp/request-worktree",
+        success: false,
+        error: { code: "UNKNOWN", message: "not a git repository" },
+        requestId: "request-refresh-error",
       },
     });
   });

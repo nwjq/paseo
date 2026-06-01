@@ -1,6 +1,6 @@
 import type { z } from "zod";
 import type { Logger } from "pino";
-import type { ProviderDefinition } from "./provider-registry.js";
+import type { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent-storage.js";
 import type {
@@ -11,6 +11,7 @@ import type {
   PersistedAgentDescriptor,
 } from "./agent-sdk-types.js";
 import { scheduleAgentMetadataGeneration } from "./agent-metadata-generator.js";
+import type { StructuredGenerationDaemonConfig } from "./structured-generation-providers.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import { unarchiveAgentState } from "./agent-prompt.js";
 import { toRecentProviderSessionDescriptorPayload } from "./agent-projections.js";
@@ -18,7 +19,7 @@ import type {
   FetchRecentProviderSessionsRequestMessage,
   ImportAgentRequestMessageSchema,
   RecentProviderSessionDescriptorPayload,
-} from "../../shared/messages.js";
+} from "@getpaseo/protocol/messages";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import { createRealpathAwarePathMatcher } from "../../utils/path.js";
 
@@ -49,7 +50,7 @@ export interface ListImportableProviderSessionsInput {
   request: FetchRecentProviderSessionsRequestMessage;
   agentManager: Pick<AgentManager, "listAgents" | "listImportablePersistedAgents">;
   agentStorage: Pick<AgentStorage, "list">;
-  providerRegistry: Record<string, Pick<ProviderDefinition, "label"> | undefined>;
+  providerSnapshotManager: Pick<ProviderSnapshotManager, "getProviderLabel">;
 }
 
 export interface ListImportableProviderSessionsResult {
@@ -62,6 +63,8 @@ export interface ImportProviderSessionInput {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
+  providerSnapshotManager?: Pick<ProviderSnapshotManager, "listProviders">;
+  daemonConfig?: StructuredGenerationDaemonConfig | null;
   paseoHome?: string;
   logger: Logger;
   deps?: {
@@ -99,7 +102,7 @@ export function normalizeImportAgentRequest(
 export async function listImportableProviderSessions(
   input: ListImportableProviderSessionsInput,
 ): Promise<ListImportableProviderSessionsResult> {
-  const { request, agentManager, agentStorage, providerRegistry } = input;
+  const { request, agentManager, agentStorage, providerSnapshotManager } = input;
   const limit = request.limit ?? 20;
   const sinceTimestamp = parseRecentProviderSessionsSince(request.since);
   const providerFilter = request.providers ? new Set(request.providers) : undefined;
@@ -123,6 +126,9 @@ export async function listImportableProviderSessions(
     if (isMetadataGenerationDescriptor(descriptor)) {
       continue;
     }
+    if (!hasUserPrompt(descriptor)) {
+      continue;
+    }
     const providerHandleId =
       descriptor.persistence.nativeHandle ?? descriptor.persistence.sessionId;
     if (importedHandles.has(toProviderSessionHandleKey(descriptor.provider, providerHandleId))) {
@@ -137,7 +143,7 @@ export async function listImportableProviderSessions(
     .slice(0, limit)
     .map((descriptor) =>
       toRecentProviderSessionDescriptorPayload(descriptor, {
-        providerLabel: providerRegistry[descriptor.provider]?.label ?? descriptor.provider,
+        providerLabel: providerSnapshotManager.getProviderLabel(descriptor.provider),
       }),
     );
 
@@ -177,6 +183,8 @@ export async function importProviderSession(
     snapshot,
     agentManager: input.agentManager,
     workspaceGitService: input.workspaceGitService,
+    providerSnapshotManager: input.providerSnapshotManager,
+    daemonConfig: input.daemonConfig,
     paseoHome: input.paseoHome,
     logger: input.logger,
     scheduleAgentMetadataGeneration:
@@ -210,6 +218,8 @@ async function applyImportedAgentTitle(input: {
   snapshot: ManagedAgent;
   agentManager: AgentManager;
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
+  providerSnapshotManager?: Pick<ProviderSnapshotManager, "listProviders">;
+  daemonConfig?: StructuredGenerationDaemonConfig | null;
   paseoHome?: string;
   logger: Logger;
   scheduleAgentMetadataGeneration: typeof scheduleAgentMetadataGeneration;
@@ -232,6 +242,16 @@ async function applyImportedAgentTitle(input: {
     agentId: input.snapshot.id,
     cwd: input.snapshot.cwd,
     workspaceGitService: input.workspaceGitService,
+    providerSnapshotManager: input.providerSnapshotManager,
+    daemonConfig: input.daemonConfig,
+    currentSelection: {
+      provider: input.snapshot.provider,
+      model: input.snapshot.runtimeInfo?.model ?? input.snapshot.config.model,
+      thinkingOptionId:
+        input.snapshot.runtimeInfo?.thinkingOptionId ??
+        input.snapshot.config.thinkingOptionId ??
+        null,
+    },
     initialPrompt,
     explicitTitle,
     paseoHome: input.paseoHome,
@@ -325,6 +345,12 @@ function isMetadataGenerationDescriptor(descriptor: PersistedAgentDescriptor): b
     return item.text.trimStart().startsWith(METADATA_GENERATION_PROMPT_PREFIX);
   }
   return false;
+}
+
+function hasUserPrompt(descriptor: PersistedAgentDescriptor): boolean {
+  return descriptor.timeline.some(
+    (item) => item.type === "user_message" && item.text.trim() !== "",
+  );
 }
 
 function collectProviderSessionHandleKeys(

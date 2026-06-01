@@ -87,13 +87,13 @@ import {
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
 import {
+  checkProviderLaunchAvailable,
   createProviderEnvSpec,
-  resolveProviderCommandPrefix,
+  resolveProviderLaunch,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "./provider-runner.js";
-import { findExecutable } from "../../../utils/executable.js";
 import { platformShell, spawnProcess } from "../../../utils/spawn.js";
 
 function assertChildWithPipes(
@@ -158,6 +158,9 @@ const DEFAULT_ACP_CAPABILITIES: AgentCapabilityFlags = {
   supportsMcpServers: true,
   supportsReasoningStream: true,
   supportsToolInvocations: true,
+  supportsRewindConversation: false,
+  supportsRewindFiles: false,
+  supportsRewindBoth: false,
 };
 
 const ACP_CLIENT_CAPABILITIES: ACPClientCapabilities = {
@@ -859,13 +862,14 @@ export class ACPAgentClient implements AgentClient {
   }
 
   protected async resolveLaunchCommand(): Promise<{ command: string; args: string[] }> {
-    const resolved = await findExecutable(this.defaultCommand[0]);
-    const prefix = await resolveProviderCommandPrefix(this.runtimeSettings?.command, () => {
-      if (!resolved) {
-        throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
-      }
-      return resolved;
+    const prefix = await resolveProviderLaunch({
+      commandConfig: this.runtimeSettings?.command,
+      defaultBinary: this.defaultCommand[0],
     });
+    const availability = await checkProviderLaunchAvailable(prefix);
+    if (!availability.available) {
+      throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
+    }
     return {
       command: prefix.command,
       args: [...prefix.args, ...this.defaultCommand.slice(1)],
@@ -1804,13 +1808,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private async spawnProcess(): Promise<SpawnedACPProcess> {
-    const resolved = await findExecutable(this.defaultCommand[0]);
-    const prefix = await resolveProviderCommandPrefix(this.runtimeSettings?.command, () => {
-      if (!resolved) {
-        throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
-      }
-      return resolved;
+    const prefix = await resolveProviderLaunch({
+      commandConfig: this.runtimeSettings?.command,
+      defaultBinary: this.defaultCommand[0],
     });
+    const availability = await checkProviderLaunchAvailable(prefix);
+    if (!availability.available) {
+      throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
+    }
 
     const command = prefix.command;
     const args = [...prefix.args, ...this.defaultCommand.slice(1)];

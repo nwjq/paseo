@@ -13,19 +13,25 @@ import {
   type ProcessTimelineResponseOutput,
   type TimelineReducerSideEffect,
 } from "@/timeline/session-stream-reducers";
-import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
-import type { AgentAttachment, SessionOutboundMessage } from "@server/shared/messages";
-import { parseServerInfoStatusPayload } from "@server/shared/messages";
+import { useCreateFlowStore } from "@/stores/create-flow-store";
+import {
+  isTimelineCatchUpComplete,
+  planResumeTimelineSync,
+  planTimelineCatchUpAfter,
+  planTimelineCatchUpFollowUp,
+} from "@/timeline/timeline-sync-plan";
+import type { AgentAttachment, SessionOutboundMessage } from "@getpaseo/protocol/messages";
+import { parseServerInfoStatusPayload } from "@getpaseo/protocol/messages";
 import {
   buildAgentAttentionNotificationPayload,
   type AgentAttentionNotificationPayload,
   type NotificationPermissionRequest,
-} from "@server/shared/agent-attention-notification";
-import type { AgentLifecycleStatus } from "@server/shared/agent-lifecycle";
-import type { DaemonClient } from "@server/client/daemon-client";
-import type { AgentSessionConfig } from "@server/server/agent/agent-sdk-types";
-import type { GitSetupOptions } from "@server/shared/messages";
-import type { AgentPermissionResponse } from "@server/server/agent/agent-sdk-types";
+} from "@getpaseo/protocol/agent-attention-notification";
+import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { AgentSessionConfig } from "@getpaseo/protocol/agent-types";
+import type { GitSetupOptions } from "@getpaseo/protocol/messages";
+import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import { getHostRuntimeStore, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useVoiceAudioEngineOptional, useVoiceRuntimeOptional } from "@/contexts/voice-context";
 import type { AudioPlaybackSource } from "@/voice/audio-engine-types";
@@ -52,7 +58,7 @@ import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agen
 import { resolveProjectPlacement } from "@/utils/project-placement";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
 import type { AttachmentMetadata } from "@/attachments/types";
-import { splitComposerAttachmentsForSubmit } from "@/components/composer-attachments";
+import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
 import { reconcilePreviousAgentStatuses } from "@/contexts/session-status-tracking";
 import { patchWorkspaceScripts } from "@/contexts/session-workspace-scripts";
 import {
@@ -375,6 +381,7 @@ function finalizeTimelineApplication(input: {
   }
   if (shouldMarkAuthoritativeHistoryApplied) {
     setAgentAuthoritativeHistoryApplied(serverId, agentId, true);
+    useCreateFlowStore.getState().clearByAgent({ serverId, agentId });
   }
   if (result.initResolution === "resolve") {
     resolveInitDeferred(initKey);
@@ -498,6 +505,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const revalidationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const revalidationInFlightRef = useRef<Promise<void> | null>(null);
   const revalidationQueuedRef = useRef(false);
+  const timelineCatchUpInFlightRef = useRef<Set<string>>(new Set());
   const wasConnectedRef = useRef(isConnected);
   const audioOutputBuffersRef = useRef<Map<string, BufferedAudioChunk[]>>(new Map());
   const activeAudioGroupsRef = useRef<Set<string>>(new Set());
@@ -744,6 +752,27 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     }, AUTHORITATIVE_REVALIDATION_DEBOUNCE_MS);
   }, [client, flushAuthoritativeRevalidation, isConnected]);
 
+  const requestCanonicalCatchUp = useCallback(
+    (agentId: string, cursor: { epoch: string; endSeq: number }) => {
+      const request = planTimelineCatchUpAfter({ epoch: cursor.epoch, seq: cursor.endSeq });
+      const key = `${agentId}:${request.cursor.epoch}:${request.cursor.seq}`;
+      const inFlight = timelineCatchUpInFlightRef.current;
+      if (inFlight.has(key)) {
+        return;
+      }
+      inFlight.add(key);
+      void client
+        .fetchAgentTimeline(agentId, request)
+        .catch((error) => {
+          console.warn("[Session] failed to fetch canonical catch-up timeline", agentId, error);
+        })
+        .finally(() => {
+          inFlight.delete(key);
+        });
+    },
+    [client],
+  );
+
   const handleAppResumed = useCallback(
     (awayMs: number) => {
       scheduleAuthoritativeRevalidation();
@@ -752,15 +781,19 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         const session = useSessionStore.getState().sessions[serverId];
         const agentId = session?.focusedAgentId;
         if (agentId) {
-          void client
-            .fetchAgentTimeline(agentId, {
-              direction: "tail",
-              limit: TIMELINE_FETCH_PAGE_SIZE,
-              projection: "canonical",
-            })
-            .catch((error) => {
+          const plan = planResumeTimelineSync({
+            cursor: session?.agentTimelineCursor.get(agentId),
+          });
+          if (plan.direction === "after") {
+            requestCanonicalCatchUp(agentId, {
+              epoch: plan.cursor.epoch,
+              endSeq: plan.cursor.seq,
+            });
+          } else {
+            void client.fetchAgentTimeline(agentId, plan).catch((error) => {
               console.warn("[Session] failed to fetch tail timeline on resume", agentId, error);
             });
+          }
         }
       }
 
@@ -769,7 +802,13 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       }
       bumpHistorySyncGeneration(serverId);
     },
-    [bumpHistorySyncGeneration, client, scheduleAuthoritativeRevalidation, serverId],
+    [
+      bumpHistorySyncGeneration,
+      client,
+      requestCanonicalCatchUp,
+      scheduleAuthoritativeRevalidation,
+      serverId,
+    ],
   );
 
   // Client activity tracking (heartbeat, push token registration)
@@ -1016,22 +1055,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     [serverId, upsertWorkspaceSetupProgress],
   );
 
-  const requestCanonicalCatchUp = useCallback(
-    (agentId: string, cursor: { epoch: string; endSeq: number }) => {
-      void client
-        .fetchAgentTimeline(agentId, {
-          direction: "after",
-          cursor: { epoch: cursor.epoch, seq: cursor.endSeq },
-          limit: TIMELINE_FETCH_PAGE_SIZE,
-          projection: "canonical",
-        })
-        .catch((error) => {
-          console.warn("[Session] failed to fetch canonical catch-up timeline", agentId, error);
-        });
-    },
-    [client],
-  );
-
   const applyTimelineResponse = useCallback(
     (
       payload: Extract<
@@ -1041,8 +1064,13 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     ) => {
       const agentId = payload.agentId;
       const initKey = getInitKey(serverId, agentId);
+      const catchUpComplete = isTimelineCatchUpComplete({
+        direction: payload.direction,
+        hasNewer: payload.hasNewer,
+        error: payload.error,
+      });
       const shouldMarkAuthoritativeHistoryApplied =
-        payload.direction === "tail" || payload.direction === "after";
+        payload.direction === "tail" || (payload.direction === "after" && catchUpComplete);
 
       // Read current store state
       const session = useSessionStore.getState().sessions[serverId];
@@ -1111,6 +1139,19 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         requestCanonicalCatchUp,
         applyAgentUpdatePayload,
       });
+
+      const followUp = planTimelineCatchUpFollowUp({
+        direction: payload.direction,
+        hasNewer: payload.hasNewer,
+        endCursor: payload.endCursor,
+        error: payload.error,
+      });
+      if (followUp?.direction === "after") {
+        requestCanonicalCatchUp(agentId, {
+          epoch: followUp.cursor.epoch,
+          endSeq: followUp.cursor.seq,
+        });
+      }
 
       finalizeTimelineApplication({
         result,
@@ -1664,6 +1705,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         id: messageId,
         text: message,
         timestamp: new Date(),
+        optimistic: true,
+        ...(images && images.length > 0 ? { images } : {}),
+        ...(attachments && attachments.length > 0 ? { attachments } : {}),
       };
 
       // Append to head if streaming (keeps the user message with the current

@@ -43,6 +43,70 @@ In any worktree-style or portless setup, never assume default ports.
 `http://127.0.0.1:9223` so renderer CPU profiles can be captured through CDP.
 Override the port with `PASEO_ELECTRON_REMOTE_DEBUGGING_PORT` when `9223` is busy.
 
+### React render profiling
+
+The app has a gated React render profiler in
+`packages/app/src/utils/render-profiler.tsx`. Wrap the component boundary you want
+to measure with `RenderProfile`, then open the app with `?renderProfile=1`. When
+the query param is absent, `RenderProfile` returns children directly and records
+nothing.
+
+Captured samples are exposed on `globalThis.__PASEO_RENDER_PROFILE__`. Call
+`globalThis.__PASEO_RESET_RENDER_PROFILE__?.()` after warm-up and before the
+interaction you want to measure. If a memo comparator or subscription boundary
+needs explanation, call `recordRenderProfileReasons(id, reasons)` while profiling;
+reason counts are exposed on `globalThis.__PASEO_RENDER_PROFILE_REASONS__`.
+
+Use this workflow for any render investigation:
+
+1. Add stable `RenderProfile` boundaries around the suspected root and expensive
+   children. Keep IDs specific enough to compare before and after.
+2. Reproduce against real app state, not toy fixtures, whenever practical.
+3. Record an idle baseline first. If idle is noisy, fix or account for that
+   before optimizing the interaction.
+4. Warm up the route, reset profiler samples, run the exact interaction, then
+   compare `actualDuration`, render counts, and per-commit samples.
+5. When a memo boundary still renders, record reasons before changing code. Do
+   not guess from object identity alone.
+6. Keep changes that move the measured profile. Remove probes or memo wrappers
+   that do not move the number.
+
+What this caught during the workspace tab investigation:
+
+- A large apparent workspace cost was real interaction work, not daemon noise;
+  the idle baseline stayed near zero.
+- The expensive stream rerender was mostly prop identity churn from pane context
+  callbacks and capability objects, not new stream data.
+- Stabilizing provider actions at the pane boundary helped because every mounted
+  panel consumes that context.
+- Comparing value-shaped capability flags beat preserving object identity through
+  unrelated stores.
+- Some plausible fixes did not pay off: memoizing the tab row and composer draft
+  object barely moved the profile, so they were removed.
+
+Existing scenario script: workspace agent/terminal tab switching. Start Expo on
+web, keep a daemon available, then run:
+
+```bash
+PASEO_PROFILE_SERVER_ID=<server-id> \
+PASEO_PROFILE_WORKSPACE_ID=<workspace-path> \
+PASEO_PROFILE_AGENT_ID=<agent-id> \
+  npm run profile:workspace-tabs --workspace=@getpaseo/app
+```
+
+This script opens the app with `?renderProfile=1`, creates a temporary terminal
+tab, switches between a real agent and that terminal, prints aggregated React
+Profiler timings, then removes the temporary terminal. It is an example of the
+workflow above, not the only way to use the profiler. Useful knobs:
+
+```bash
+PASEO_PROFILE_APP_URL=http://localhost:19010 # Expo web URL
+PASEO_PROFILE_SWITCH_COUNT=1                # number of agent/terminal switch pairs
+PASEO_PROFILE_SWITCH_WAIT_MS=250            # delay after each click
+PASEO_PROFILE_IDLE_WAIT_MS=3000             # idle baseline before switching
+PASEO_PROFILE_DUMP_COMMITS=1                # include per-commit profiler samples
+```
+
 ### Desktop macOS compositor watchdog
 
 macOS display sleep can leave Chromium's GPU-process display link — the vsync
@@ -109,23 +173,28 @@ Every `scripts` entry with `"type": "service"` receives these environment variab
 }
 ```
 
-## Build sync gotchas
+## Built workspace packages
 
-The daemon and CLI consume sibling workspaces from compiled `dist/` output, not `src/`. When you change a workspace that something else imports, rebuild the producer first or the consumer will speak a stale protocol and fail with handshake warnings, timeouts, or stale type errors.
+Package imports resolve through package exports to compiled `dist/` output, not sibling `src/` files. This is true in local dev and in published packages: the app, daemon, CLI, and SDK consumers should all exercise the same runtime paths.
 
-The fastest way to keep this consistent is to rebuild the whole daemon stack with one command:
+`npm run dev`, `npm run dev:server`, and `npm run dev:app` build the workspace packages they need once, then keep `@getpaseo/protocol` and `@getpaseo/client` fresh with TypeScript watch builds while the daemon or Expo runs. If you change protocol schemas or client code outside those watch workflows, rebuild the producer before trusting runtime behavior.
+
+Use the named root build targets instead of remembering workspace dependency chains:
 
 ```bash
-npm run build:daemon
+npm run build:client       # protocol -> client
+npm run build:server-deps  # highlight -> relay -> protocol -> client
+npm run build:server       # server-deps -> server -> cli
+npm run build:app-deps     # highlight -> protocol -> client -> expo-two-way-audio
 ```
 
-This rebuilds, in order, `@getpaseo/highlight` → `@getpaseo/relay` → `@getpaseo/server` → `@getpaseo/cli`. Use it whenever you have changed any of those four and need clean cross-package types or runtime behavior.
+Use `npm run build:server` whenever you have changed any daemon/server-facing package and need clean cross-package types or runtime behavior.
 
 For tighter loops, you can rebuild a single workspace:
 
-- Changed `packages/relay/src/*`: `npm run build --workspace=@getpaseo/relay` (server imports `@getpaseo/relay` from `dist/*`).
-- Changed `packages/server/src/client/*` (especially `daemon-client.ts`) or shared WS protocol types: `npm run build --workspace=@getpaseo/server` (CLI imports `@getpaseo/server` via package exports resolving to `dist/*`).
-- Changed `packages/highlight/src/*`: `npm run build --workspace=@getpaseo/highlight` (server depends on it).
+- Changed `packages/protocol/src/*` or `packages/client/src/*`: `npm run build:client`.
+- Changed `packages/server/src/*`, `packages/cli/src/*`, `packages/relay/src/*`, or `packages/highlight/src/*`: `npm run build:server`.
+- Changed app build dependencies: `npm run build:app-deps`.
 
 ## CLI reference
 
@@ -186,6 +255,20 @@ Get the session ID from the agent JSON (`persistence.sessionId`), then:
 Point Playwright MCP at the running Expo web target. Under `npm run dev` (macOS/Linux) that is the portless URL printed in the dev banner — typically `https://app.localhost`. If you start Expo directly with `expo start --web` (no portless), Metro defaults to `http://localhost:8081`.
 
 Do NOT use browser history (back/forward). Always navigate by clicking UI elements or using `browser_navigate` with the full URL — the app uses client-side routing and browser history breaks state.
+
+## App web deploys
+
+`packages/app` exports a single-page Expo web app and deploys the `dist/`
+directory to Cloudflare Pages with `npm run deploy:web --workspace=@getpaseo/app`.
+
+PWA install metadata lives in `packages/app/public/manifest.json` and is linked
+from `packages/app/public/index.html`. Keep the install icons in `public/` so
+Cloudflare serves them from stable root URLs after `expo export`.
+
+Do not add service-worker caching casually. Paseo is a live control surface for
+agents, and an aggressive service worker can strand installed users on stale web
+code. If offline behavior becomes a product requirement, add it deliberately
+with an update strategy and test the installed-app upgrade path.
 
 ## Expo troubleshooting
 

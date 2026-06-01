@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { DaemonClient } from "@server/client/daemon-client";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { queryClient as appQueryClient } from "@/query/query-client";
 import { useSessionStore } from "@/stores/session-store";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
@@ -167,6 +167,46 @@ describe("checkout-git-actions-store", () => {
     ).rejects.toThrow("push rejected");
     expect(
       useCheckoutGitActionsStore.getState().getStatus({ serverId, cwd, actionId: "pull-and-push" }),
+    ).toBe("idle");
+  });
+
+  it("refreshes git and GitHub state and reports success", async () => {
+    const client = {
+      checkoutRefresh: vi.fn(async () => ({ success: true, error: null })),
+    };
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client } as unknown as (typeof state.sessions)[string],
+      },
+    }));
+
+    await useCheckoutGitActionsStore.getState().refresh({ serverId, cwd });
+
+    expect(client.checkoutRefresh).toHaveBeenCalledWith(cwd);
+    expect(
+      useCheckoutGitActionsStore.getState().getStatus({ serverId, cwd, actionId: "refresh" }),
+    ).toBe("success");
+  });
+
+  it("surfaces a refresh error and returns to idle", async () => {
+    const client = {
+      checkoutRefresh: vi.fn(async () => ({ error: { message: "not a git repository" } })),
+    };
+    useSessionStore.setState((state) => ({
+      ...state,
+      sessions: {
+        ...state.sessions,
+        [serverId]: { client } as unknown as (typeof state.sessions)[string],
+      },
+    }));
+
+    await expect(useCheckoutGitActionsStore.getState().refresh({ serverId, cwd })).rejects.toThrow(
+      "not a git repository",
+    );
+    expect(
+      useCheckoutGitActionsStore.getState().getStatus({ serverId, cwd, actionId: "refresh" }),
     ).toBe("idle");
   });
 

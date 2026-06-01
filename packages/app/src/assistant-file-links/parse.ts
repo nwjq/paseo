@@ -1,5 +1,13 @@
 import { isAbsolutePath } from "@/utils/path";
 
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 export interface InlinePathTarget {
   raw: string;
   path: string;
@@ -225,10 +233,7 @@ export function parseFileProtocolUrl(value: string): InlinePathTarget | null {
   };
 }
 
-function parseAssistantInlinePathLink(
-  value: string,
-  options: AssistantHrefParseOptions,
-): InlinePathTarget | null {
+function parseAssistantInlinePathLink(value: string): InlinePathTarget | null {
   const inlinePathTarget = parseInlinePathToken(value);
   if (!inlinePathTarget) {
     return null;
@@ -236,10 +241,6 @@ function parseAssistantInlinePathLink(
 
   const normalizedPath = normalizePathToken(inlinePathTarget.path);
   if (!normalizedPath || !isAbsolutePath(normalizedPath)) {
-    return null;
-  }
-
-  if (!isAllowedAbsolutePath(normalizedPath, options.workspaceRoot)) {
     return null;
   }
 
@@ -306,9 +307,7 @@ export function parseAssistantFileLink(
     return null;
   }
 
-  const inlinePathTarget = parseAssistantInlinePathLink(trimmed, {
-    workspaceRoot: options.workspaceRoot,
-  });
+  const inlinePathTarget = parseAssistantInlinePathLink(trimmed);
   if (inlinePathTarget) {
     return inlinePathTarget;
   }
@@ -316,7 +315,7 @@ export function parseAssistantFileLink(
   const windowsPathMatch = trimmed.match(/^([A-Za-z]:[\\/][^?#]*)(#[^?]+)?$/);
   if (windowsPathMatch) {
     const normalizedPath = normalizePathToken(windowsPathMatch[1] ?? "");
-    if (!normalizedPath || !isAllowedAbsolutePath(normalizedPath, options.workspaceRoot)) {
+    if (!normalizedPath) {
       return null;
     }
 
@@ -350,12 +349,8 @@ export function parseAssistantFileLink(
     return null;
   }
 
-  const normalizedPath = normalizePathToken(decodeURIComponent(parsedUrl.pathname));
+  const normalizedPath = normalizePathToken(safeDecodeURIComponent(parsedUrl.pathname));
   if (!normalizedPath || !isAbsolutePath(normalizedPath)) {
-    return null;
-  }
-
-  if (!isAllowedAbsolutePath(normalizedPath, options.workspaceRoot)) {
     return null;
   }
 
@@ -394,13 +389,21 @@ function parseWorkspaceRelativeFileLink(
   value: string,
   options: AssistantHrefParseOptions,
 ): InlinePathTarget | null {
-  const workspaceRoot = normalizePathInput(options.workspaceRoot);
-  if (!workspaceRoot) {
+  const parsed = parseLocalPathParts(value);
+  if (!parsed || isAbsolutePath(parsed.path)) {
     return null;
   }
 
-  const parsed = parseLocalPathParts(value);
-  if (!parsed || isAbsolutePath(parsed.path)) {
+  if (isHomeRelativePath(parsed.path)) {
+    return {
+      raw: value,
+      path: parsed.path,
+      ...parsed.lines,
+    };
+  }
+
+  const workspaceRoot = normalizePathInput(options.workspaceRoot);
+  if (!workspaceRoot) {
     return null;
   }
 
@@ -519,6 +522,10 @@ function isAllowedAbsolutePath(pathValue: string, workspaceRoot?: string): boole
   const comparePrefix = compareWorkspaceRoot === "/" ? "/" : `${compareWorkspaceRoot}/`;
 
   return comparePath === compareWorkspaceRoot || comparePath.startsWith(comparePrefix);
+}
+
+function isHomeRelativePath(pathValue: string): boolean {
+  return pathValue === "~" || pathValue.startsWith("~/") || pathValue.startsWith("~\\");
 }
 
 function isExternalHref(value: string): boolean {
@@ -659,7 +666,7 @@ function normalizeFileUrlPath(pathname: string): string | null {
     return null;
   }
 
-  const decoded = decodeURIComponent(pathname).replace(/\\/g, "/");
+  const decoded = safeDecodeURIComponent(pathname).replace(/\\/g, "/");
   if (!decoded) {
     return null;
   }

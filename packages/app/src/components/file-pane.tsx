@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { FileReadResult } from "@server/client/daemon-client";
+import type { FileReadResult } from "@getpaseo/client/internal/daemon-client";
 import Markdown, { MarkdownIt } from "react-native-markdown-display";
 import {
   ActivityIndicator,
@@ -11,7 +11,6 @@ import {
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { Fonts } from "@/constants/theme";
 import { useSessionStore, type ExplorerFile } from "@/stores/session-store";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
@@ -19,6 +18,7 @@ import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { lineNumberGutterWidth } from "@/components/code-insets";
+import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
 import { isWeb } from "@/constants/platform";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
@@ -27,6 +27,7 @@ import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-ur
 import { persistAttachmentFromBytes } from "@/attachments/service";
 import { createPreviewAttachmentId, getFileNameFromPath } from "@/attachments/utils";
 import { explorerFileFromReadResult } from "@/file-explorer/read-result";
+import { resolveFilePreviewReadTarget } from "@/file-explorer/preview-target";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 
 interface CodeLineProps {
@@ -171,16 +172,16 @@ const codeLineStyles = StyleSheet.create((theme) => ({
   },
   gutterText: {
     color: theme.colors.foreground,
-    fontFamily: Fonts.mono,
-    fontSize: theme.fontSize.sm,
-    lineHeight: theme.fontSize.sm * 1.45,
+    fontFamily: theme.fontFamily.mono,
+    fontSize: theme.fontSize.code,
+    lineHeight: theme.fontSize.code * 1.45,
     opacity: 0.4,
     userSelect: "none",
   },
   lineText: {
-    fontFamily: Fonts.mono,
-    fontSize: theme.fontSize.sm,
-    lineHeight: theme.fontSize.sm * 1.45,
+    fontFamily: theme.fontFamily.mono,
+    fontSize: theme.fontSize.code,
+    lineHeight: theme.fontSize.code * 1.45,
     flex: 1,
   },
 }));
@@ -216,9 +217,9 @@ function FilePreviewBody({
 
   const gutterWidth = useMemo(() => {
     if (!highlightedLines) return 0;
-    return lineNumberGutterWidth(highlightedLines.length, theme.fontSize.sm);
-  }, [highlightedLines, theme.fontSize.sm]);
-  const lineHeight = theme.fontSize.sm * 1.45;
+    return lineNumberGutterWidth(highlightedLines.length, theme.fontSize.code);
+  }, [highlightedLines, theme.fontSize.code]);
+  const lineHeight = theme.fontSize.code * 1.45;
   const lineSelection = useMemo(() => {
     if (!highlightedLines) {
       return null;
@@ -295,7 +296,7 @@ function FilePreviewBody({
       lineNumber: index + 1,
     }));
     const codeLines = (
-      <View>
+      <View dataSet={CODE_SURFACE_DATASET}>
         {keyedLines.map(({ key, tokens, lineNumber }) => (
           <CodeLine
             key={key}
@@ -398,16 +399,26 @@ export function FilePane({
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const normalizedWorkspaceRoot = useMemo(() => workspaceRoot.trim(), [workspaceRoot]);
   const normalizedFilePath = useMemo(() => trimNonEmpty(location.path), [location.path]);
+  const readTarget = useMemo(
+    () =>
+      normalizedFilePath
+        ? resolveFilePreviewReadTarget({
+            path: normalizedFilePath,
+            workspaceRoot: normalizedWorkspaceRoot,
+          })
+        : null,
+    [normalizedFilePath, normalizedWorkspaceRoot],
+  );
 
   const query = useQuery({
-    queryKey: ["workspaceFile", serverId, normalizedWorkspaceRoot, normalizedFilePath],
-    enabled: Boolean(client && normalizedWorkspaceRoot && normalizedFilePath),
+    queryKey: ["workspaceFile", serverId, readTarget?.cwd ?? null, readTarget?.path ?? null],
+    enabled: Boolean(client && readTarget),
     queryFn: async () => {
-      if (!client || !normalizedWorkspaceRoot || !normalizedFilePath) {
+      if (!client || !readTarget) {
         return { file: null as ExplorerFile | null, error: "Host is not connected" };
       }
       try {
-        const file = await client.readFile(normalizedWorkspaceRoot, normalizedFilePath);
+        const file = await client.readFile(readTarget.cwd, readTarget.path);
         const preview = await createFilePanePreview(file);
         return {
           file: preview.file,

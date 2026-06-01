@@ -32,12 +32,6 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
               Changelog
             </a>
             <a
-              href="/cloud"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Cloud
-            </a>
-            <a
               href="/docs/cli"
               className="block text-muted-foreground hover:text-foreground transition-colors"
             >
@@ -90,6 +84,14 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
               className="block text-muted-foreground hover:text-foreground transition-colors"
             >
               Discord
+            </a>
+            <a
+              href="https://www.reddit.com/r/PaseoAI/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Reddit
             </a>
             <a
               href="https://github.com/getpaseo/paseo"

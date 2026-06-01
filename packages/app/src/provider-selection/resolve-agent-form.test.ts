@@ -13,12 +13,12 @@ import {
   type UserModifiedFields,
 } from "./resolve-agent-form";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
-import type { AgentProviderDefinition } from "@server/server/agent/provider-manifest";
+import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import type {
   AgentModelDefinition,
   AgentProvider,
   ProviderSnapshotEntry,
-} from "@server/server/agent/agent-sdk-types";
+} from "@getpaseo/protocol/agent-types";
 
 const TEST_CODEX_DEFINITION: AgentProviderDefinition = {
   id: "codex",
@@ -766,6 +766,21 @@ describe("resolveAgentForm", () => {
       expect(next.form.modeId).toBe("auto");
       expect(next.userModified.provider).toBe(true);
       expect(next.userModified.model).toBe(true);
+    });
+
+    it("preserves the current preferred mode when selecting a provider and model", () => {
+      const state = makeState({ provider: "codex", modeId: "full-access" });
+      const next = resolveAgentForm(state, {
+        type: "SET_PROVIDER_AND_MODEL_FROM_USER",
+        provider: "codex",
+        modelId: "gpt-5.3-codex",
+        providerDef: TEST_CODEX_DEFINITION,
+        providerModels: CODEX_MODELS,
+      });
+
+      expect(next.form.provider).toBe("codex");
+      expect(next.form.model).toBe("gpt-5.3-codex");
+      expect(next.form.modeId).toBe("full-access");
     });
 
     it("falls back to provider default model when modelId is empty", () => {

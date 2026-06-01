@@ -1,6 +1,12 @@
-import { createTerminal, type TerminalSession, type TerminalStateSnapshot } from "./terminal.js";
+import {
+  createTerminal,
+  type TerminalSession,
+  type TerminalStateSnapshot,
+  type TerminalStateSnapshotOptions,
+} from "./terminal.js";
 import { captureTerminalLines, type CaptureTerminalLinesResult } from "./terminal-capture.js";
 import { resolve, sep, win32, posix } from "node:path";
+import { isSameOrDescendantPath } from "../server/path-utils.js";
 
 export interface TerminalListItem {
   id: string;
@@ -29,7 +35,10 @@ export interface TerminalManager {
   }): Promise<TerminalSession>;
   registerCwdEnv(options: { cwd: string; env: Record<string, string> }): void;
   getTerminal(id: string): TerminalSession | undefined;
-  getTerminalState(id: string): Promise<TerminalStateSnapshot | null>;
+  getTerminalState(
+    id: string,
+    options?: TerminalStateSnapshotOptions,
+  ): Promise<TerminalStateSnapshot | null>;
   setTerminalTitle(id: string, title: string): boolean;
   killTerminal(id: string): void;
   killTerminalAndWait(
@@ -161,7 +170,16 @@ export function createTerminalManager(): TerminalManager {
     async getTerminals(cwd: string): Promise<TerminalSession[]> {
       assertAbsolutePath(cwd);
 
-      return terminalsByCwd.get(cwd) ?? [];
+      // Terminals are bucketed by exact cwd, but an agent can open a terminal in
+      // a subdirectory of the workspace. A query for the workspace root must
+      // surface those too, so aggregate every bucket at or below `cwd`.
+      const sessions: TerminalSession[] = [];
+      for (const [bucketCwd, bucketSessions] of terminalsByCwd) {
+        if (isSameOrDescendantPath(cwd, bucketCwd)) {
+          sessions.push(...bucketSessions);
+        }
+      }
+      return sessions;
     },
 
     async createTerminal(options: {
@@ -208,8 +226,11 @@ export function createTerminalManager(): TerminalManager {
       return terminalsById.get(id);
     },
 
-    async getTerminalState(id: string): Promise<TerminalStateSnapshot | null> {
-      return terminalsById.get(id)?.getStateSnapshot() ?? null;
+    async getTerminalState(
+      id: string,
+      options?: TerminalStateSnapshotOptions,
+    ): Promise<TerminalStateSnapshot | null> {
+      return terminalsById.get(id)?.getStateSnapshot(options) ?? null;
     },
 
     setTerminalTitle(id: string, title: string): boolean {

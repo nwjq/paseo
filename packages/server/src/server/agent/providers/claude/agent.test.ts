@@ -56,6 +56,49 @@ describe("convertClaudeHistoryEntry", () => {
     expect(Array.isArray(mapBlocks.mock.calls[0][0])).toBe(true);
   });
 
+  test("replays persisted Claude tool results as completed tool calls", () => {
+    const entry = {
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_persisted",
+            content: "done",
+          },
+        ],
+      },
+      toolUseResult: {
+        stdout: "done",
+        stderr: "",
+        interrupted: false,
+      },
+    };
+
+    const completedToolCall: AgentTimelineItem[] = [
+      {
+        type: "tool_call",
+        callId: "toolu_persisted",
+        name: "Bash",
+        status: "completed",
+        detail: {
+          type: "shell",
+          command: "echo done",
+          output: "done",
+          exitCode: 0,
+        },
+        error: null,
+      },
+    ];
+
+    const mapPersistedToolResultBlocks = (): AgentTimelineItem[] => completedToolCall;
+
+    expect(convertClaudeHistoryEntry(entry, mapPersistedToolResultBlocks)).toEqual(
+      completedToolCall,
+    );
+  });
+
   test("returns user messages when no tool blocks exist", () => {
     const entry = {
       type: "user",
@@ -358,6 +401,8 @@ describe("ClaudeAgentClient.listModels", () => {
     const models = await client.listModels({ cwd: "/tmp/claude-models", force: false });
 
     expect(models.map((m) => m.id)).toEqual([
+      "claude-opus-4-8[1m]",
+      "claude-opus-4-8",
       "claude-opus-4-7[1m]",
       "claude-opus-4-7",
       "claude-opus-4-6[1m]",
@@ -373,7 +418,7 @@ describe("ClaudeAgentClient.listModels", () => {
     }
 
     const defaultModel = models.find((m) => m.isDefault);
-    expect(defaultModel?.id).toBe("claude-opus-4-6");
+    expect(defaultModel?.id).toBe("claude-opus-4-8");
   });
 });
 
@@ -460,6 +505,98 @@ describe("ClaudeAgentClient binary resolution", () => {
     expect(queryFactory.mock.calls[0]?.[0].options.pathToClaudeCodeExecutable).toBe(
       customClaudePath,
     );
+
+    await session.close();
+  });
+});
+
+describe("ClaudeAgentSession features", () => {
+  const logger = createTestLogger();
+
+  function createQueryMock() {
+    const queryReturn = vi.fn(async () => undefined);
+    const queryMock = {
+      close: vi.fn(),
+      return: queryReturn,
+      applyFlagSettings: vi.fn(async () => undefined),
+      setModel: vi.fn(async () => undefined),
+    };
+    const queryFactory = vi.fn(() => queryMock);
+    return { queryFactory, queryMock };
+  }
+
+  test("lists fast mode only for supported Opus models", async () => {
+    const client = new ClaudeAgentClient({ logger, resolveBinary: async () => "/test/claude/bin" });
+
+    await expect(
+      client.listFeatures({
+        provider: "claude",
+        cwd: process.cwd(),
+        model: "claude-opus-4-8",
+      }),
+    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
+
+    await expect(
+      client.listFeatures({
+        provider: "claude",
+        cwd: process.cwd(),
+        model: "claude-sonnet-4-6",
+      }),
+    ).resolves.toEqual([]);
+  });
+
+  test("passes initial fast mode through Claude flag settings", async () => {
+    const { queryFactory, queryMock } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+      featureValues: { fast_mode: true },
+    });
+
+    await expect(
+      (
+        session as unknown as {
+          ensureQuery(): Promise<unknown>;
+        }
+      ).ensureQuery(),
+    ).resolves.toBeDefined();
+
+    expect(queryFactory.mock.calls[0]?.[0].options.settings).toMatchObject({ fastMode: true });
+    expect(queryMock.applyFlagSettings).toHaveBeenCalledWith({ fastMode: true });
+
+    await session.close();
+  });
+
+  test("toggles fast mode on the active query without restarting it", async () => {
+    const { queryFactory, queryMock } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+    });
+
+    await (
+      session as unknown as {
+        ensureQuery(): Promise<unknown>;
+      }
+    ).ensureQuery();
+    await session.setFeature?.("fast_mode", true);
+
+    expect(queryFactory).toHaveBeenCalledTimes(1);
+    expect(queryMock.applyFlagSettings).toHaveBeenLastCalledWith({ fastMode: true });
+    expect(queryMock.close).not.toHaveBeenCalled();
+    expect(queryMock.return).not.toHaveBeenCalled();
 
     await session.close();
   });
@@ -1519,6 +1656,12 @@ describe("ClaudeAgentSession context window usage", () => {
     const result = await session.run("turn");
     await session.close();
 
-    expect(result.timeline).toEqual([{ type: "assistant_message", text: "Here is the answer." }]);
+    expect(result.timeline).toEqual([
+      {
+        type: "assistant_message",
+        text: "Here is the answer.",
+        messageId: "assistant-third-party-1",
+      },
+    ]);
   });
 });

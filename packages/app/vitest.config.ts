@@ -31,6 +31,7 @@ export default defineConfig({
         extends: true,
         test: {
           name: "browser",
+          fileParallelism: false,
           include: ["src/**/*.browser.{test,spec}.{ts,tsx}"],
           browser: {
             enabled: true,
@@ -84,7 +85,6 @@ export default defineConfig({
         replacement: path.resolve(__dirname, "../relay/src/index.ts"),
       },
       { find: "@", replacement: path.resolve(__dirname, "src") },
-      { find: "@server", replacement: path.resolve(__dirname, "../server/src") },
       // Point to the ESM build so Vite can transform its imports and apply the
       // react alias below (the CJS build uses require('react') which bypasses
       // Vite alias resolution).

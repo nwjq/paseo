@@ -1,19 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Pressable,
-  Text,
-  View,
-  type StyleProp,
-  type TextStyle,
-  type ViewStyle,
-} from "react-native";
+import { Pressable, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { MarkdownTextSpan } from "@/components/markdown-text";
 import * as Clipboard from "expo-clipboard";
 import { Check, Copy } from "lucide-react-native";
-import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
+import type { HighlightToken } from "@getpaseo/highlight";
 import { isNative, isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
+import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
+import { highlightToKeyedLines, type KeyedLine } from "@/utils/highlight-cache";
 
 interface HighlightedCodeBlockProps {
   code: string;
@@ -46,33 +42,9 @@ function fenceLanguageToExtension(info: string | null | undefined): string | nul
   return LANGUAGE_ALIASES[normalized] ?? normalized;
 }
 
-// Cross-instance cache for tokenized code blocks. Tokenization is
-// theme-independent (colors are applied at render time), so the key is just
-// (language, code). Bounded by entry count — 200 is generous for a chat
-// transcript, code blocks rarely repeat beyond a handful of distinct shapes.
-class LRUCache<K, V> {
-  private readonly map = new Map<K, V>();
-  constructor(private readonly max: number) {}
-
-  get(key: K): V | undefined {
-    const value = this.map.get(key);
-    if (value === undefined) return undefined;
-    this.map.delete(key);
-    this.map.set(key, value);
-    return value;
-  }
-
-  set(key: K, value: V): void {
-    if (this.map.has(key)) this.map.delete(key);
-    else if (this.map.size >= this.max) {
-      const oldest = this.map.keys().next().value;
-      if (oldest !== undefined) this.map.delete(oldest);
-    }
-    this.map.set(key, value);
-  }
+function stripTerminalFenceNewline(code: string): string {
+  return code.endsWith("\n") ? code.slice(0, -1) : code;
 }
-
-const tokenizationCache = new LRUCache<string, KeyedLine[]>(200);
 
 export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
   code,
@@ -87,23 +59,12 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
     () => splitFenceStyle(inheritedStyles, textStyle),
     [inheritedStyles, textStyle],
   );
+  const renderedCode = useMemo(() => stripTerminalFenceNewline(code), [code]);
 
-  const keyedLines = useMemo<KeyedLine[] | null>(() => {
-    const ext = fenceLanguageToExtension(language);
-    if (!ext) return null;
-    const cacheKey = `${ext}:${code}`;
-    const cached = tokenizationCache.get(cacheKey);
-    if (cached) return cached;
-    let tokenizedLines: HighlightToken[][];
-    try {
-      tokenizedLines = highlightCode(code, `x.${ext}`);
-    } catch {
-      return null;
-    }
-    const result = tokenizedLines.map(toKeyedLine);
-    tokenizationCache.set(cacheKey, result);
-    return result;
-  }, [code, language]);
+  const keyedLines = useMemo<KeyedLine[] | null>(
+    () => highlightToKeyedLines(renderedCode, fenceLanguageToExtension(language)),
+    [renderedCode, language],
+  );
 
   const isCompact = useIsCompactFormFactor();
   const [isHovered, setIsHovered] = useState(false);
@@ -115,46 +76,32 @@ export const HighlightedCodeBlock = React.memo(function HighlightedCodeBlock({
   return (
     <View
       style={containerStyle}
+      dataSet={CODE_SURFACE_DATASET}
       onPointerEnter={handlePointerEnter}
       onPointerLeave={handlePointerLeave}
     >
       {keyedLines ? (
-        <Text style={innerTextStyle}>
-          {keyedLines.map((line, lineIndex) => (
-            <React.Fragment key={line.key}>
-              {lineIndex > 0 ? "\n" : null}
-              {line.tokens.map(({ key, token }) => (
-                <TokenSpan key={key} token={token} />
-              ))}
-            </React.Fragment>
-          ))}
-        </Text>
+        <MarkdownTextSpan style={innerTextStyle}>{renderCodeSegments(keyedLines)}</MarkdownTextSpan>
       ) : (
-        <Text style={innerTextStyle}>{code}</Text>
+        <MarkdownTextSpan style={innerTextStyle}>{renderedCode}</MarkdownTextSpan>
       )}
       <CopyButton getCode={getCode} visible={controlsVisible} />
     </View>
   );
 });
 
-interface KeyedToken {
-  key: string;
-  token: HighlightToken;
-}
-
-interface KeyedLine {
-  key: string;
-  tokens: KeyedToken[];
-}
-
-function toKeyedLine(tokens: HighlightToken[], lineIndex: number): KeyedLine {
-  return {
-    key: `line-${lineIndex}`,
-    tokens: tokens.map((token, tokenIndex) => ({
-      key: `${lineIndex}-${tokenIndex}`,
-      token,
-    })),
-  };
+function renderCodeSegments(keyedLines: KeyedLine[]): React.ReactNode[] {
+  const segments: React.ReactNode[] = [];
+  for (let lineIndex = 0; lineIndex < keyedLines.length; lineIndex += 1) {
+    const line = keyedLines[lineIndex];
+    if (lineIndex > 0) {
+      segments.push(<CodeTextSpan key={`${line.key}-newline`} text={"\n"} />);
+    }
+    for (const { key, token } of line.tokens) {
+      segments.push(<TokenSpan key={`${line.key}-${key}`} token={token} />);
+    }
+  }
+  return segments;
 }
 
 interface TokenSpanProps {
@@ -162,8 +109,19 @@ interface TokenSpanProps {
 }
 
 const TokenSpan = React.memo(function TokenSpan({ token }: TokenSpanProps) {
-  if (!token.style) return token.text;
-  return <Text style={syntaxTokenStyleFor(token.style)}>{token.text}</Text>;
+  return (
+    <MarkdownTextSpan style={token.style ? syntaxTokenStyleFor(token.style) : undefined}>
+      {token.text}
+    </MarkdownTextSpan>
+  );
+});
+
+interface CodeTextSpanProps {
+  text: string;
+}
+
+const CodeTextSpan = React.memo(function CodeTextSpan({ text }: CodeTextSpanProps) {
+  return <MarkdownTextSpan>{text}</MarkdownTextSpan>;
 });
 
 interface SplitStyles {
@@ -179,6 +137,7 @@ function splitFenceStyle(inheritedStyles: TextStyle, textStyle: TextStyle): Spli
   const textOnly: TextStyle = { ...WEB_SELECTABLE };
   if (fontFamily !== undefined) textOnly.fontFamily = fontFamily;
   if (fontSize !== undefined) textOnly.fontSize = fontSize;
+  if (fontSize !== undefined) textOnly.lineHeight = Math.round(fontSize * 1.45);
   if (color !== undefined) textOnly.color = color;
   return {
     containerStyle: [box as ViewStyle, CONTAINER_BASE],
