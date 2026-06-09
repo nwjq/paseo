@@ -20,6 +20,13 @@ export type WorkspaceExecutionAuthorityResult =
       message: string;
     };
 
+interface WorkspaceExecutionDirectoryLike {
+  id?: string | null;
+  workspaceId?: string | null;
+  workspaceDirectory?: string | null;
+  project?: { checkout?: { cwd?: string | null } | null } | null;
+}
+
 export function resolveWorkspaceRouteId(input: {
   routeWorkspaceId: string | null | undefined;
 }): string | null {
@@ -36,7 +43,7 @@ export function resolveWorkspaceIdByExecutionDirectory(input: {
   }
 
   for (const workspace of input.workspaces ?? []) {
-    if (normalizeWorkspacePath(workspace.workspaceDirectory) === normalizedWorkspaceDirectory) {
+    if (resolveWorkspaceDescriptorExecutionDirectory(workspace) === normalizedWorkspaceDirectory) {
       return workspace.id;
     }
   }
@@ -117,7 +124,7 @@ export function getWorkspaceExecutionAuthority(
     };
   }
 
-  const workspaceDirectory = normalizeWorkspacePath(workspace.workspaceDirectory);
+  const workspaceDirectory = resolveWorkspaceDescriptorExecutionDirectory(workspace);
   if (!workspaceDirectory) {
     return {
       ok: false,
@@ -157,6 +164,30 @@ export function resolveWorkspaceExecutionDirectory(input: {
   workspaceDirectory: string | null | undefined;
 }): string | null {
   return normalizeWorkspacePath(input.workspaceDirectory);
+}
+
+export function resolveWorkspaceDescriptorExecutionDirectory(
+  workspace: WorkspaceExecutionDirectoryLike | null | undefined,
+): string | null {
+  return (
+    normalizeWorkspacePath(workspace?.project?.checkout?.cwd) ??
+    normalizeWorkspacePath(workspace?.workspaceDirectory)
+  );
+}
+
+export function requireWorkspaceDescriptorExecutionDirectory(
+  workspace: WorkspaceExecutionDirectoryLike | null | undefined,
+): string {
+  const workspaceDirectory = resolveWorkspaceDescriptorExecutionDirectory(workspace);
+  const workspaceId = workspace?.id ?? workspace?.workspaceId ?? null;
+  if (!workspaceDirectory) {
+    throw new Error(
+      workspaceId
+        ? `Workspace directory is missing for workspace ${workspaceId}`
+        : "Workspace directory is missing.",
+    );
+  }
+  return workspaceDirectory;
 }
 
 export function requireWorkspaceExecutionDirectory(input: {

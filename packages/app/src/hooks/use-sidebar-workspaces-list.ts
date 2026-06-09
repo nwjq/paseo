@@ -4,6 +4,7 @@ import { useSessionStore, type Agent, type WorkspaceDescriptor } from "@/stores/
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { normalizeWorkspacePath } from "@/utils/workspace-identity";
+import { resolveWorkspaceDescriptorExecutionDirectory } from "@/utils/workspace-execution";
 import { selectPrHintFromStatus } from "@/git/use-pr-status-query";
 import { useHostProjects } from "@/projects/host-projects";
 import { fetchAllWorkspaceDescriptors } from "@/projects/workspace-fetching";
@@ -46,6 +47,7 @@ export function createSidebarWorkspaceEntry(input: {
     projectKey: input.workspace.project?.projectKey ?? input.workspace.projectId,
     projectRootPath: input.workspace.projectRootPath,
     workspaceDirectory: input.workspace.workspaceDirectory,
+    project: input.workspace.project,
     projectKind: input.workspace.projectKind,
     workspaceKind: input.workspace.workspaceKind,
     name: input.workspace.name,
@@ -120,7 +122,7 @@ function getRootAgentWorkspaceActivity(input: {
   workspace: WorkspaceDescriptor;
   agents: Map<string, Agent> | undefined;
 }): WorkspaceAgentActivity | null {
-  const workspaceDirectory = normalizeWorkspacePath(input.workspace.workspaceDirectory);
+  const workspaceDirectory = resolveWorkspaceDescriptorExecutionDirectory(input.workspace);
   if (!workspaceDirectory) {
     return null;
   }

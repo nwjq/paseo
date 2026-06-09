@@ -1,5 +1,6 @@
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
+import { resolveWorkspaceDescriptorExecutionDirectory } from "@/utils/workspace-execution";
 
 export interface WorkspaceStructureProject {
   projectKey: string;
@@ -45,7 +46,7 @@ function compareWorkspaceStructureProjects(
 }
 
 function rankProjectCreationDirectoryCandidate(workspace: WorkspaceDescriptor): number {
-  const workspaceDirectory = workspace.workspaceDirectory.trim();
+  const workspaceDirectory = resolveWorkspaceDescriptorExecutionDirectory(workspace) ?? "";
   if (!workspaceDirectory) {
     return Number.NEGATIVE_INFINITY;
   }
@@ -84,7 +85,8 @@ export function buildWorkspaceStructureProjects(input: {
         projectKind: workspace.projectKind,
         projectRootPath: workspace.projectRootPath,
         iconWorkingDir: workspace.projectRootPath,
-        creationWorkingDir: workspace.workspaceDirectory,
+        creationWorkingDir:
+          resolveWorkspaceDescriptorExecutionDirectory(workspace) ?? workspace.workspaceDirectory,
         creationWorkingDirRank: rankProjectCreationDirectoryCandidate(workspace),
         workspaceKeys: [],
         workspaces: [],
@@ -95,7 +97,8 @@ export function buildWorkspaceStructureProjects(input: {
 
     const creationWorkingDirRank = rankProjectCreationDirectoryCandidate(workspace);
     if (creationWorkingDirRank > project.creationWorkingDirRank) {
-      project.creationWorkingDir = workspace.workspaceDirectory;
+      project.creationWorkingDir =
+        resolveWorkspaceDescriptorExecutionDirectory(workspace) ?? workspace.workspaceDirectory;
       project.creationWorkingDirRank = creationWorkingDirRank;
     }
 

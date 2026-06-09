@@ -17,6 +17,7 @@ export interface SidebarWorkspaceEntry {
   projectKey: string;
   projectRootPath?: string;
   workspaceDirectory?: string;
+  project?: WorkspaceDescriptor["project"];
   projectKind: WorkspaceDescriptor["projectKind"];
   workspaceKind: WorkspaceDescriptor["workspaceKind"];
   name: string;
@@ -54,6 +55,7 @@ function createStructuralWorkspaceEntry(input: {
     projectKey: input.project.projectKey,
     projectRootPath: input.project.projectRootPath,
     workspaceDirectory: undefined,
+    project: undefined,
     projectKind: input.project.projectKind,
     workspaceKind: "checkout",
     name: input.workspaceId,

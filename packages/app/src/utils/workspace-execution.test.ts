@@ -25,6 +25,7 @@ function createWorkspace(
     statusEnteredAt: null,
     diffStat: input.diffStat ?? null,
     scripts: input.scripts ?? [],
+    project: input.project,
   };
 }
 
@@ -73,6 +74,36 @@ describe("resolveWorkspaceIdByExecutionDirectory", () => {
         workspaceDirectory: "/repo",
       }),
     ).toBeNull();
+  });
+
+  it("matches the checkout cwd when it differs from the workspace root", () => {
+    const workspaces = [
+      createWorkspace({
+        id: "workspace-1",
+        projectRootPath: "/repo",
+        workspaceDirectory: "/repo",
+        project: {
+          projectKey: "project-1",
+          projectName: "Project",
+          checkout: {
+            cwd: "/repo/packages/app",
+            isGit: true,
+            currentBranch: "main",
+            remoteUrl: null,
+            worktreeRoot: "/repo",
+            isPaseoOwnedWorktree: false,
+            mainRepoRoot: null,
+          },
+        },
+      }),
+    ];
+
+    expect(
+      resolveWorkspaceIdByExecutionDirectory({
+        workspaces,
+        workspaceDirectory: "/repo/packages/app",
+      }),
+    ).toBe("workspace-1");
   });
 });
 
@@ -175,6 +206,39 @@ describe("workspace execution authority", () => {
       workspaceId: "workspace-1",
       workspaceDirectory: "/repo/.paseo/worktrees/feature",
       workspace: workspaces.get("workspace-1"),
+    });
+  });
+
+  it("uses the checkout cwd as the execution directory when the workspace root is broader", () => {
+    const workspace = createWorkspace({
+      id: "workspace-1",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      project: {
+        projectKey: "project-1",
+        projectName: "Project",
+        checkout: {
+          cwd: "/repo/packages/app",
+          isGit: true,
+          currentBranch: "main",
+          remoteUrl: null,
+          worktreeRoot: "/repo",
+          isPaseoOwnedWorktree: false,
+          mainRepoRoot: null,
+        },
+      },
+    });
+    const workspaces = new Map<string, WorkspaceDescriptor>([["workspace-1", workspace]]);
+
+    expect(
+      requireWorkspaceExecutionAuthority({
+        workspaces,
+        workspaceId: "workspace-1",
+      }),
+    ).toEqual({
+      workspaceId: "workspace-1",
+      workspaceDirectory: "/repo/packages/app",
+      workspace,
     });
   });
 });

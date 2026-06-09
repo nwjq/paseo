@@ -1,5 +1,6 @@
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import type { WorkspaceStructureProject } from "@/projects/workspace-structure";
+import { resolveWorkspaceDescriptorExecutionDirectory } from "@/utils/workspace-execution";
 
 export interface HostProjectListItem {
   serverId: string;
@@ -79,6 +80,10 @@ export function hostProjectFromWorkspace(input: {
   if (!projectKey || !iconWorkingDir) {
     return null;
   }
+  const workspaceCreationDirectory =
+    (resolveWorkspaceDescriptorExecutionDirectory(input.workspace) ??
+      input.workspace.workspaceDirectory.trim()) ||
+    iconWorkingDir;
   return {
     serverId: input.serverId,
     projectKey,
@@ -86,7 +91,7 @@ export function hostProjectFromWorkspace(input: {
     projectKind: input.workspace.projectKind,
     projectRootPath: input.workspace.projectRootPath,
     iconWorkingDir,
-    creationWorkingDir: input.workspace.workspaceDirectory || iconWorkingDir,
+    creationWorkingDir: workspaceCreationDirectory,
     workspaceKeys: [input.workspace.id],
     canCreateWorktree: canCreateWorktreeForProjectKind(input.workspace.projectKind),
   };

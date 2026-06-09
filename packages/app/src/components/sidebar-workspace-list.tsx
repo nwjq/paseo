@@ -120,7 +120,9 @@ import { buildSidebarProjectRowModel } from "@/utils/sidebar-project-row-model";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { openExternalUrl } from "@/utils/open-external-url";
 import {
+  requireWorkspaceDescriptorExecutionDirectory,
   requireWorkspaceExecutionDirectory,
+  resolveWorkspaceDescriptorExecutionDirectory,
   resolveWorkspaceExecutionDirectory,
 } from "@/utils/workspace-execution";
 import { confirmRiskyWorktreeArchive } from "@/git/worktree-archive-warning";
@@ -1216,13 +1218,17 @@ function ProjectHeaderRow({
 }: ProjectHeaderRowProps) {
   const [isHovered, setIsHovered] = useState(false);
   const isMobileBreakpoint = useIsCompactFormFactor();
+  const workspaceExecutionDirectory = useMemo(
+    () => resolveWorkspaceDescriptorExecutionDirectory(workspace),
+    [workspace],
+  );
   const projectCreationDirectory = useMemo(
     () =>
       resolveProjectCreationDirectory({
         projectIconWorkingDir: project.creationWorkingDir,
-        workspaceDirectory: workspace?.workspaceDirectory,
+        workspaceDirectory: workspaceExecutionDirectory,
       }),
-    [project.creationWorkingDir, workspace?.workspaceDirectory],
+    [project.creationWorkingDir, workspaceExecutionDirectory],
   );
   const projectWorkspaceLocationLabel = useMemo(
     () =>
@@ -1230,10 +1236,10 @@ function ProjectHeaderRow({
         ? resolveWorkspaceLocationLabel({
             projectKind: workspace.projectKind,
             projectRootPath: workspace.projectRootPath,
-            workspaceDirectory: workspace.workspaceDirectory,
+            workspaceDirectory: workspaceExecutionDirectory,
           })
         : null,
-    [workspace],
+    [workspace, workspaceExecutionDirectory],
   );
   const projectWorkspaceLocationStyle = useMemo(
     () => [styles.projectWorkspaceHint, isHovered && styles.projectWorkspaceHintHovered],
@@ -1397,9 +1403,7 @@ function WorkspaceRowInner({
   archiveShortcutKeys,
 }: WorkspaceRowInnerProps) {
   const _isCompact = useIsCompactFormFactor();
-  const workspaceDirectory = resolveWorkspaceExecutionDirectory({
-    workspaceDirectory: workspace.workspaceDirectory,
-  });
+  const workspaceDirectory = resolveWorkspaceDescriptorExecutionDirectory(workspace);
   const isTouchPlatform = platformIsNative;
   const interaction = useLongPressDragInteraction({
     drag,
@@ -1530,14 +1534,14 @@ function WorkspaceRowWithMenu({
   const queryClient = useQueryClient();
   const [isArchivingWorkspace, setIsArchivingWorkspace] = useState(false);
   const [isRenameOpen, setIsRenameOpen] = useState(false);
-  const workspaceDirectory = resolveWorkspaceExecutionDirectory({
+  const workspaceArchiveDirectory = resolveWorkspaceExecutionDirectory({
     workspaceDirectory: workspace.workspaceDirectory,
   });
   const archiveStatus = useCheckoutGitActionsStore((state) =>
-    workspaceDirectory
+    workspaceArchiveDirectory
       ? state.getStatus({
           serverId: workspace.serverId,
-          cwd: workspaceDirectory,
+          cwd: workspaceArchiveDirectory,
           actionId: "archive-worktree",
         })
       : "idle",
@@ -1642,17 +1646,14 @@ function WorkspaceRowWithMenu({
   const handleCopyPath = useCallback(() => {
     let copyTargetDirectory: string;
     try {
-      copyTargetDirectory = requireWorkspaceExecutionDirectory({
-        workspaceId: workspace.workspaceId,
-        workspaceDirectory: workspace.workspaceDirectory,
-      });
+      copyTargetDirectory = requireWorkspaceDescriptorExecutionDirectory(workspace);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Workspace path not available");
       return;
     }
     void Clipboard.setStringAsync(copyTargetDirectory);
     toast.copied("Path copied");
-  }, [toast, workspace.workspaceDirectory, workspace.workspaceId]);
+  }, [toast, workspace]);
 
   const handleCopyBranchName = useCallback(() => {
     void Clipboard.setStringAsync(workspace.name);
@@ -1665,10 +1666,7 @@ function WorkspaceRowWithMenu({
       if (!client) {
         throw new Error("Host is not connected");
       }
-      const targetCwd = requireWorkspaceExecutionDirectory({
-        workspaceId: workspace.workspaceId,
-        workspaceDirectory: workspace.workspaceDirectory,
-      });
+      const targetCwd = requireWorkspaceDescriptorExecutionDirectory(workspace);
       const payload = await client.renameBranch({ cwd: targetCwd, branch });
       if (!payload.success || payload.error) {
         throw new Error(payload.error?.message ?? "Failed to rename branch");

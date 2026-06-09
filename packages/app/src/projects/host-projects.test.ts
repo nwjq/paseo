@@ -54,6 +54,7 @@ function workspace(input: Partial<WorkspaceDescriptor>): WorkspaceDescriptor {
     archivingAt: input.archivingAt ?? null,
     diffStat: input.diffStat ?? null,
     scripts: input.scripts ?? [],
+    project: input.project,
   };
 }
 
@@ -215,5 +216,32 @@ describe("host project list", () => {
         workspace: workspace({ projectKind: "directory" }),
       }),
     ).toMatchObject({ projectKind: "directory", canCreateWorktree: false });
+  });
+
+  it("uses the checkout cwd for workspace-backed project creation", () => {
+    expect(
+      hostProjectFromWorkspace({
+        serverId: "host-a",
+        workspace: workspace({
+          projectRootPath: "/repo/a",
+          workspaceDirectory: "/repo/a",
+          project: {
+            projectKey: "project-a",
+            projectName: "Project A",
+            checkout: {
+              cwd: "/repo/a/packages/app",
+              isGit: true,
+              currentBranch: "main",
+              remoteUrl: null,
+              worktreeRoot: "/repo/a",
+              isPaseoOwnedWorktree: false,
+              mainRepoRoot: null,
+            },
+          },
+        }),
+      }),
+    ).toMatchObject({
+      creationWorkingDir: "/repo/a/packages/app",
+    });
   });
 });

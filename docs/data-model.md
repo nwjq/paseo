@@ -397,6 +397,12 @@ Array of workspace records. A workspace is a specific working directory within a
 | `updatedAt`   | `string` (ISO 8601)                             |                                |
 | `archivedAt`  | `string \| null` (ISO 8601)                     | Soft-delete; required nullable |
 
+Workspace records can be projected together with project placement metadata. When `cwd` and the
+placement checkout cwd differ, user-facing workspace actions use the placement checkout cwd: copied
+paths, newly created workspace agents, terminals, file browsing, and "open in editor" should land in
+the directory the user actually opened. Lifecycle actions that operate on a workspace or worktree as
+a registry object may still need the registry `cwd`.
+
 ---
 
 ## 8. Push Token Store

@@ -38,6 +38,7 @@ function createWorkspace(
     statusEnteredAt: null,
     diffStat: input.diffStat ?? null,
     scripts: input.scripts ?? [],
+    project: input.project,
   };
 }
 
@@ -266,6 +267,39 @@ describe("workspace structure composition", () => {
       projectRootPath: "/repo/main",
       workspaceDirectory: "/repo/main/packages/app",
       workspaceKind: "local_checkout",
+    });
+    initializeWorkspaces([workspace]);
+
+    const projects = selectWorkspaceStructureProjects(useSessionStore.getState(), SERVER_ID);
+
+    expect(projects[0]).toMatchObject({
+      projectRootPath: "/repo/main",
+      iconWorkingDir: "/repo/main",
+      creationWorkingDir: "/repo/main/packages/app",
+    });
+  });
+
+  it("uses checkout cwd for project-level creation when workspace directory is the repo root", () => {
+    const workspace = createWorkspace({
+      id: "workspace-subdir",
+      projectId: "project-a",
+      projectDisplayName: "Project A",
+      projectRootPath: "/repo/main",
+      workspaceDirectory: "/repo/main",
+      workspaceKind: "local_checkout",
+      project: {
+        projectKey: "project-a",
+        projectName: "Project A",
+        checkout: {
+          cwd: "/repo/main/packages/app",
+          isGit: true,
+          currentBranch: "main",
+          remoteUrl: null,
+          worktreeRoot: "/repo/main",
+          isPaseoOwnedWorktree: false,
+          mainRepoRoot: null,
+        },
+      },
     });
     initializeWorkspaces([workspace]);
 
