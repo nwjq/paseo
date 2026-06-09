@@ -229,13 +229,14 @@ interface SessionForTestOptions {
   workspaceRegistry?: { get: ReturnType<typeof vi.fn> };
   projectRegistry?: Partial<SessionOptions["projectRegistry"]>;
   terminalManager?: SessionOptions["terminalManager"];
-  scriptRouteStore?: SessionOptions["scriptRouteStore"];
+  serviceProxy?: SessionOptions["serviceProxy"];
   scriptRuntimeStore?: SessionOptions["scriptRuntimeStore"];
   getDaemonTcpPort?: () => number | null;
   getDaemonTcpHost?: () => string | null;
   providerSnapshotManager?: ProviderSnapshotManager;
   stt?: SessionOptions["stt"];
   voice?: SessionOptions["voice"];
+  paseoHome?: string;
   messages?: unknown[];
   binaryMessages?: Uint8Array[];
 }
@@ -272,7 +273,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     logger,
     downloadTokenStore: asDownloadTokenStore(),
     pushTokenStore: asPushTokenStore(),
-    paseoHome: "/tmp/paseo-home",
+    paseoHome: options.paseoHome ?? "/tmp/paseo-home",
     agentManager: asAgentManager({
       listAgents: vi.fn(() => []),
       subscribe: vi.fn(() => () => {}),
@@ -311,7 +312,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     terminalManager: options.terminalManager ?? null,
     providerSnapshotManager:
       options.providerSnapshotManager ?? createProviderSnapshotManagerStub().manager,
-    scriptRouteStore: options.scriptRouteStore,
+    serviceProxy: options.serviceProxy,
     scriptRuntimeStore: options.scriptRuntimeStore,
     getDaemonTcpPort: options.getDaemonTcpPort,
     getDaemonTcpHost: options.getDaemonTcpHost,
@@ -3549,7 +3550,7 @@ describe("session workspace script handling", () => {
       workspaceGitService,
       workspaceRegistry,
       terminalManager: { subscribeTerminalsChanged: vi.fn(() => () => {}) },
-      scriptRouteStore: { listRoutesForWorkspace: vi.fn(() => []) },
+      serviceProxy: { listRoutesForWorkspace: vi.fn(() => []) },
       scriptRuntimeStore: { listForWorkspace: vi.fn(() => []) },
       getDaemonTcpPort: () => 6767,
       getDaemonTcpHost: () => "127.0.0.1",

@@ -6,6 +6,7 @@ import type { AgentModelDefinition } from "./agent-sdk-types.js";
 const mockState = vi.hoisted(() => {
   interface ConstructorEntry {
     runtimeSettings?: unknown;
+    providerParams?: unknown;
   }
 
   return {
@@ -206,10 +207,11 @@ vi.mock("./providers/pi/agent.js", () => ({
     readonly provider = "pi";
     readonly runtimeSettings?: unknown;
 
-    constructor(options: { runtimeSettings?: unknown }) {
+    constructor(options: { runtimeSettings?: unknown; providerParams?: unknown }) {
       this.runtimeSettings = options.runtimeSettings;
       mockState.constructorArgs.pi.push({
         runtimeSettings: options.runtimeSettings,
+        providerParams: options.providerParams,
       });
     }
 
@@ -412,6 +414,39 @@ test("built-in override applies env", () => {
   });
 });
 
+test("OMP is a disabled built-in backed by the Pi adapter", () => {
+  const registry = buildProviderRegistry(logger);
+
+  expect(registry.omp).toMatchObject({
+    id: "omp",
+    label: "OMP",
+    enabled: false,
+    derivedFromProviderId: null,
+  });
+  expect(registry.omp.createClient(logger).provider).toBe("omp");
+  expect(mockState.constructorArgs.pi.at(-1)).toEqual({
+    runtimeSettings: {
+      command: {
+        mode: "replace",
+        argv: ["omp"],
+      },
+    },
+    providerParams: {
+      sessionDir: "~/.omp/agent/sessions",
+    },
+  });
+});
+
+test("OMP can be enabled without custom provider boilerplate", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      omp: { enabled: true },
+    },
+  });
+
+  expect(registry.omp.enabled).toBe(true);
+});
+
 test("new provider extending claude appears in registry", () => {
   const registry = buildProviderRegistry(logger, {
     providerOverrides: {
@@ -427,6 +462,36 @@ test("new provider extending claude appears in registry", () => {
   expect(registry.zai.label).toBe("ZAI");
   expect(registry.zai.description).toBe("Claude with ZAI defaults");
   expect(registry.zai.createClient(logger).provider).toBe("zai");
+});
+
+test("new provider extending pi passes params to the base provider constructor", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      omp: {
+        extends: "pi",
+        label: "OMP",
+        command: ["omp"],
+        params: {
+          sessionDir: "~/.omp/agent/sessions",
+        },
+      },
+    },
+  });
+
+  expect(registry.omp.createClient(logger).provider).toBe("omp");
+  expect(mockState.constructorArgs.pi.at(-1)).toEqual({
+    runtimeSettings: {
+      command: {
+        mode: "replace",
+        argv: ["omp"],
+      },
+      env: undefined,
+      disallowedTools: undefined,
+    },
+    providerParams: {
+      sessionDir: "~/.omp/agent/sessions",
+    },
+  });
 });
 
 test("new provider extending acp uses GenericACPAgentClient", () => {
@@ -835,7 +900,7 @@ describe("model merging", () => {
     ]);
   });
 
-  test("built-in Claude profile models append to runtime models", async () => {
+  test("built-in Claude profile models replace runtime models (issue #1299)", async () => {
     mockState.runtimeModels.set("claude", [
       {
         provider: "claude",
@@ -872,11 +937,6 @@ describe("model merging", () => {
     });
 
     expect(models).toEqual([
-      {
-        provider: "claude",
-        id: "runtime-model",
-        label: "Runtime Model",
-      },
       {
         provider: "claude",
         id: "shared-model",
@@ -1128,5 +1188,33 @@ describe("model merging", () => {
 
     const defaultModel = models.find((model) => model.isDefault) ?? models[0];
     expect(defaultModel?.id).toBe("profile-default");
+  });
+
+  test("built-in Claude models override replaces hardcoded first-party models (issue #1299)", async () => {
+    mockState.runtimeModels.set("claude", [
+      { provider: "claude", id: "claude-opus-4-8", label: "Opus 4.8", isDefault: true },
+      { provider: "claude", id: "claude-opus-4-7", label: "Opus 4.7" },
+      { provider: "claude", id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
+      { provider: "claude", id: "claude-haiku-4-5", label: "Haiku 4.5" },
+    ]);
+
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        claude: {
+          models: [
+            { id: "MiniMax-M2.7", label: "MiniMax-M2.7" },
+            { id: "MiniMax-M3", label: "MiniMax-M3", isDefault: true },
+          ],
+        },
+      },
+    });
+
+    const models = await registry.claude.fetchModels({
+      cwd: "/tmp/registry-models",
+      force: false,
+    });
+
+    expect(models.map((model) => model.id)).toEqual(["MiniMax-M2.7", "MiniMax-M3"]);
+    expect(models.find((model) => model.isDefault)?.id).toBe("MiniMax-M3");
   });
 });

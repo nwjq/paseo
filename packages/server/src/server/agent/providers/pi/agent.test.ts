@@ -1,8 +1,19 @@
-import { closeSync, existsSync, fstatSync, openSync, readSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import pino from "pino";
 import { describe, expect, test } from "vitest";
 
-import type { AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
+import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
 import { PiRpcAgentClient, PiRpcAgentSession, transformPiModels } from "./agent.js";
 import { FakePi } from "./test-utils/fake-pi.js";
 
@@ -95,6 +106,18 @@ class SessionEvents {
           event.type === "timeline",
       )
       .map((event) => event.item);
+  }
+
+  timelineAndCompletionEvents() {
+    return this.events.flatMap((event) => {
+      if (event.type === "timeline") {
+        return [{ type: "timeline" as const, item: event.item }];
+      }
+      if (event.type === "turn_completed") {
+        return [{ type: "turn_completed" as const }];
+      }
+      return [];
+    });
   }
 
   nextTurnCompletion(): Promise<Extract<AgentStreamEvent, { type: "turn_completed" }>> {
@@ -459,6 +482,28 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("surfaces Pi extension command messages and completes when no agent turn starts", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("/show-status");
+    fakeSession.emit({
+      type: "message_end",
+      message: {
+        role: "custom",
+        content: [{ type: "text", text: "Extension command output" }],
+      },
+    });
+
+    expect(events.timelineAndCompletionEvents()).toEqual([
+      {
+        type: "timeline",
+        item: { type: "assistant_message", text: "Extension command output" },
+      },
+      { type: "turn_completed" },
+    ]);
+  });
+
   test("adds Pi assistant context to generic provider finish errors", async () => {
     const { pi, session, events } = await createSession();
 
@@ -626,6 +671,128 @@ describe("PiRpcAgentSession", () => {
 });
 
 describe("PiRpcAgentClient", () => {
+  test("lists JSONL persisted sessions from configured provider params", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "paseo-pi-sessions-"));
+    const cwd = path.join(root, "workspace");
+    const otherCwd = path.join(root, "other");
+    const sessionsDir = path.join(root, "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    const sessionFile = path.join(sessionsDir, "20260101_session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "session",
+          version: 3,
+          id: "pi-session-jsonl",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          cwd,
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "entry-1",
+          timestamp: "2026-01-01T00:00:01.000Z",
+          message: { role: "user", content: "first prompt" },
+        }),
+        JSON.stringify({
+          type: "session_info",
+          id: "info-1",
+          timestamp: "2026-01-01T00:00:02.000Z",
+          name: "Imported Pi session",
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "entry-2",
+          timestamp: "2026-01-01T00:00:03.000Z",
+          message: { role: "user", content: [{ type: "text", text: "last prompt" }] },
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    writeFileSync(
+      path.join(sessionsDir, "other.jsonl"),
+      `${JSON.stringify({ type: "session", version: 3, id: "other", cwd: otherCwd })}\n`,
+      "utf8",
+    );
+    const client = new PiRpcAgentClient({
+      logger: pino({ level: "silent" }),
+      runtime: new FakePi(),
+      providerParams: { sessionDir: sessionsDir },
+    });
+
+    await expect(client.listPersistedAgents({ cwd })).resolves.toEqual([
+      {
+        provider: "pi",
+        sessionId: "pi-session-jsonl",
+        cwd,
+        title: "Imported Pi session",
+        lastActivityAt: new Date("2026-01-01T00:00:03.000Z"),
+        persistence: {
+          provider: "pi",
+          sessionId: "pi-session-jsonl",
+          nativeHandle: sessionFile,
+          metadata: { provider: "pi", cwd },
+        },
+        timeline: [
+          { type: "user_message", text: "first prompt" },
+          { type: "user_message", text: "last prompt" },
+        ],
+      },
+    ]);
+  });
+
+  test("lists JSONL persisted sessions from Pi's configured agent directory", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "paseo-pi-default-sessions-"));
+    const cwd = path.join(root, "workspace");
+    const agentDir = path.join(root, ".pi", "agent");
+    const sessionsDir = path.join(agentDir, "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    const sessionFile = path.join(sessionsDir, "20260102_session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "session",
+          version: 3,
+          id: "pi-default-session",
+          timestamp: "2026-01-02T00:00:00.000Z",
+          cwd,
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "entry-1",
+          timestamp: "2026-01-02T00:00:01.000Z",
+          message: { role: "user", content: "default dir prompt" },
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    const client = new PiRpcAgentClient({
+      logger: pino({ level: "silent" }),
+      runtime: new FakePi(),
+      runtimeSettings: {
+        env: {
+          PI_CODING_AGENT_DIR: agentDir,
+        },
+      },
+    });
+
+    await expect(client.listPersistedAgents({ cwd })).resolves.toMatchObject([
+      {
+        provider: "pi",
+        sessionId: "pi-default-session",
+        cwd,
+        title: "default dir prompt",
+        persistence: {
+          provider: "pi",
+          sessionId: "pi-default-session",
+          nativeHandle: sessionFile,
+          metadata: { provider: "pi", cwd },
+        },
+      },
+    ]);
+  });
+
   test("lists models from a short-lived Pi session in the requested cwd", async () => {
     const pi = new FakePi();
     const client = createClient(pi);
@@ -659,9 +826,199 @@ describe("PiRpcAgentClient", () => {
     ];
 
     await expect(session.listCommands()).resolves.toEqual([
+      {
+        name: "compact",
+        description: "Manually compact the session context",
+        argumentHint: "[instructions]",
+      },
+      {
+        name: "autocompact",
+        description: "Toggle automatic context compaction",
+        argumentHint: "[on|off|toggle]",
+      },
       { name: "review", description: "Review changes", argumentHint: "" },
       { name: "fix-tests", description: "Fix tests", argumentHint: "" },
       { name: "skill:docs", description: "Read docs", argumentHint: "" },
+    ]);
+  });
+
+  test("lists Pi compact even when RPC get_commands omits built-in slash commands", async () => {
+    const { pi, session } = await createSession();
+    pi.latestSession().commands = [
+      { name: "review", description: "Review changes", source: "extension" },
+    ];
+
+    await expect(session.listCommands()).resolves.toContainEqual({
+      name: "compact",
+      description: "Manually compact the session context",
+      argumentHint: "[instructions]",
+    });
+    await expect(session.listCommands()).resolves.toContainEqual({
+      name: "autocompact",
+      description: "Toggle automatic context compaction",
+      argumentHint: "[on|off|toggle]",
+    });
+  });
+
+  test("preserves known argument hints when RPC get_commands returns built-in slash commands", async () => {
+    const { pi, session } = await createSession();
+    pi.latestSession().commands = [
+      { name: "compact", description: "Compact from RPC", source: "extension" },
+      { name: "autocompact", description: "Auto compact from RPC", source: "extension" },
+    ];
+
+    await expect(session.listCommands()).resolves.toEqual([
+      {
+        name: "compact",
+        description: "Compact from RPC",
+        argumentHint: "[instructions]",
+      },
+      {
+        name: "autocompact",
+        description: "Auto compact from RPC",
+        argumentHint: "[on|off|toggle]",
+      },
+    ]);
+  });
+
+  test("executes Pi compact through RPC instead of prompt text", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    const handler = (session as AgentSession).tryHandleOutOfBand?.("/compact focus on tests");
+    const events: AgentStreamEvent[] = [];
+
+    expect(handler).not.toBeNull();
+    await handler?.run({ emit: (event) => events.push(event) });
+
+    expect(fakeSession.compactRequests).toEqual([{ customInstructions: "focus on tests" }]);
+    expect(fakeSession.prompts).toEqual([]);
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "compaction", status: "loading", trigger: "manual" },
+      },
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "compaction", status: "completed", trigger: "manual" },
+      },
+    ]);
+  });
+
+  test("closes Pi compact loading marker when RPC rejects after compaction starts", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.emitCompactEnd = false;
+    fakeSession.compactError = new Error("summarizer failed");
+    const handler = (session as AgentSession).tryHandleOutOfBand?.("/compact");
+    const events: AgentStreamEvent[] = [];
+
+    expect(handler).not.toBeNull();
+    await handler?.run({ emit: (event) => events.push(event) });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "compaction", status: "loading", trigger: "manual" },
+      },
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "compaction", status: "completed", trigger: "manual" },
+      },
+      {
+        type: "timeline",
+        provider: "pi",
+        item: {
+          type: "assistant_message",
+          text: "[Error] Failed to compact context: summarizer failed",
+        },
+      },
+    ]);
+  });
+
+  test("executes Pi autocompact through RPC instead of prompt text", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    const handler = (session as AgentSession).tryHandleOutOfBand?.("/autocompact off");
+    const events: AgentStreamEvent[] = [];
+
+    expect(handler).not.toBeNull();
+    await handler?.run({ emit: (event) => events.push(event) });
+
+    expect(fakeSession.setAutoCompactionRequests).toEqual([false]);
+    expect(fakeSession.prompts).toEqual([]);
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "assistant_message", text: "Auto-compaction disabled." },
+      },
+    ]);
+  });
+
+  test("rejects unknown Pi autocompact mode instead of toggling", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    const handler = (session as AgentSession).tryHandleOutOfBand?.("/autocompact banana");
+    const events: AgentStreamEvent[] = [];
+
+    expect(handler).not.toBeNull();
+    await handler?.run({ emit: (event) => events.push(event) });
+
+    expect(fakeSession.setAutoCompactionRequests).toEqual([]);
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: {
+          type: "assistant_message",
+          text: "[Error] Usage: /autocompact [on|off|toggle]",
+        },
+      },
+    ]);
+  });
+
+  test("toggles Pi autocompact through current RPC state", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.state.autoCompactionEnabled = false;
+    const handler = (session as AgentSession).tryHandleOutOfBand?.("/autocompact");
+    const events: AgentStreamEvent[] = [];
+
+    expect(handler).not.toBeNull();
+    await handler?.run({ emit: (event) => events.push(event) });
+
+    expect(fakeSession.setAutoCompactionRequests).toEqual([true]);
+    expect(events).toContainEqual({
+      type: "timeline",
+      provider: "pi",
+      item: { type: "assistant_message", text: "Auto-compaction enabled." },
+    });
+  });
+
+  test("rejects Pi autocompact toggle when current RPC state is unavailable", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    delete fakeSession.state.autoCompactionEnabled;
+    const handler = (session as AgentSession).tryHandleOutOfBand?.("/autocompact");
+    const events: AgentStreamEvent[] = [];
+
+    expect(handler).not.toBeNull();
+    await handler?.run({ emit: (event) => events.push(event) });
+
+    expect(fakeSession.setAutoCompactionRequests).toEqual([]);
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: {
+          type: "assistant_message",
+          text: "[Error] Auto-compaction state is unavailable. Use /autocompact on or /autocompact off.",
+        },
+      },
     ]);
   });
 

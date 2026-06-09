@@ -63,6 +63,18 @@ describe("PersistedConfigSchema daemon relay config", () => {
   });
 });
 
+describe("PersistedConfigSchema worktrees config", () => {
+  test("accepts optional worktree root", () => {
+    const parsed = PersistedConfigSchema.parse({
+      worktrees: {
+        root: "/mnt/fast/paseo-worktrees",
+      },
+    });
+
+    expect(parsed.worktrees?.root).toBe("/mnt/fast/paseo-worktrees");
+  });
+});
+
 describe("PersistedConfigSchema daemon append system prompt", () => {
   test("accepts optional append system prompt", () => {
     const parsed = PersistedConfigSchema.parse({
@@ -546,6 +558,39 @@ describe("PersistedConfigSchema voice mode config", () => {
 
     expect(parsed.features?.dictation?.stt?.language).toBe("fr");
     expect(parsed.features?.voiceMode?.stt?.language).toBe("de");
+  });
+});
+
+describe("loadPersistedConfig", () => {
+  test("accepts the documented config schema marker", () => {
+    const home = createTempHome();
+    const configPath = path.join(home, "config.json");
+    try {
+      writeFileSync(
+        configPath,
+        `${JSON.stringify(
+          {
+            $schema: "https://paseo.sh/schemas/paseo.config.v1.json",
+            version: 1,
+            daemon: {
+              listen: "127.0.0.1:6767",
+              hostnames: ["localhost", ".localhost"],
+              mcp: { enabled: true },
+            },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+
+      const config = loadPersistedConfig(home);
+
+      expect(config.daemon?.listen).toBe("127.0.0.1:6767");
+      expect(config.daemon?.hostnames).toEqual(["localhost", ".localhost"]);
+      expect(config.daemon?.mcp?.enabled).toBe(true);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 
