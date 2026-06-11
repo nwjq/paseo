@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { CheckoutPrStatusSchema } from "@getpaseo/protocol/messages";
+import { i18n } from "@/i18n/i18next";
 
 import { buildGitActions, type BuildGitActionsInput } from "./policy";
 
@@ -132,6 +133,10 @@ function createInput(overrides: Partial<BuildGitActionsInput> = {}): BuildGitAct
 }
 
 describe("git-actions-policy", () => {
+  afterEach(async () => {
+    await i18n.changeLanguage("en");
+  });
+
   it("shows only remote sync actions on the base branch", () => {
     const actions = buildGitActions(createInput({ hasRemote: true }));
 
@@ -163,6 +168,25 @@ describe("git-actions-policy", () => {
       disabled: false,
       unavailableMessage:
         "Push isn't available yet because there are newer changes to bring in first",
+    });
+  });
+
+  it("keeps push available for a no-upstream Paseo worktree with local commits", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        isPaseoOwnedWorktree: true,
+        isOnBaseBranch: false,
+        aheadCount: 1,
+        aheadOfOrigin: null,
+        behindOfOrigin: null,
+      }),
+    );
+    const pushAction = actions.secondary.find((action) => action.id === "push");
+
+    expect(pushAction).toMatchObject({
+      disabled: false,
+      unavailableMessage: undefined,
     });
   });
 
@@ -578,6 +602,29 @@ describe("git-actions-policy", () => {
     const action = actions.secondary.find((entry) => entry.id === "merge-branch");
 
     expect(action).toMatchObject({ label: "Merge locally" });
+  });
+
+  it("uses the active language for policy-owned action labels and unavailable messages", async () => {
+    await i18n.changeLanguage("zh-CN");
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        behindOfOrigin: 1,
+        isOnBaseBranch: false,
+        aheadCount: 0,
+      }),
+    );
+
+    expect(actions.primary).toMatchObject({
+      id: "pull",
+      label: "Pull",
+      pendingLabel: "正在 pull...",
+      successLabel: "已 pull",
+    });
+    expect(actions.secondary.find((entry) => entry.id === "pr")).toMatchObject({
+      label: "创建 PR",
+      unavailableMessage: "无法创建 PR，因为此分支还没有新的 commit",
+    });
   });
 
   it.each([

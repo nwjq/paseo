@@ -195,6 +195,7 @@ describe("shouldAdmitToRollout", () => {
       checkForAppUpdate({
         currentVersion: "0.1.72",
         releaseChannel: "stable",
+        intent: "automatic",
       }),
     ).resolves.toEqual({
       hasUpdate: false,

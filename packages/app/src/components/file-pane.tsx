@@ -9,7 +9,6 @@ import Markdown, {
 import {
   ActivityIndicator,
   Image as RNImage,
-  Linking,
   ScrollView as RNScrollView,
   Text,
   type TextProps,
@@ -18,6 +17,7 @@ import {
   type ViewStyle,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
 import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { MarkdownParagraphView, MarkdownTextSpan } from "@/components/markdown-text";
@@ -25,6 +25,7 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { useSessionStore, type ExplorerFile } from "@/stores/session-store";
 import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import { useWebScrollbarStyle } from "@/hooks/use-web-scrollbar-style";
+import { openExternalUrl } from "@/utils/open-external-url";
 import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
@@ -208,7 +209,7 @@ function FilePreviewMarkdownLink({
   const handlePress = useCallback(() => {
     if (!href) return;
     if (onLinkPress?.(href) === false) return;
-    void Linking.openURL(href);
+    void openExternalUrl(href);
   }, [href, onLinkPress]);
 
   return (
@@ -503,6 +504,7 @@ function FilePreviewBody({
   imagePreviewUri,
 }: FilePreviewBodyProps) {
   const { theme } = useUnistyles();
+  const { t } = useTranslation();
   const filePath = location.path;
   const markdownStyles = useMemo(() => createMarkdownStyles(theme), [theme]);
   const markdownParser = useMemo(() => MarkdownIt({ typographer: true, linkify: true }), []);
@@ -562,7 +564,7 @@ function FilePreviewBody({
     return (
       <View style={styles.centerState}>
         <ActivityIndicator size="small" />
-        <Text style={styles.loadingText}>Loading file…</Text>
+        <Text style={styles.loadingText}>{t("panels.file.loading")}</Text>
       </View>
     );
   }
@@ -570,7 +572,7 @@ function FilePreviewBody({
   if (!preview) {
     return (
       <View style={styles.centerState}>
-        <Text style={styles.emptyText}>No preview available</Text>
+        <Text style={styles.emptyText}>{t("panels.file.noPreview")}</Text>
       </View>
     );
   }
@@ -659,7 +661,7 @@ function FilePreviewBody({
       return (
         <View style={styles.centerState}>
           <ActivityIndicator size="small" />
-          <Text style={styles.loadingText}>Loading file…</Text>
+          <Text style={styles.loadingText}>{t("panels.file.loading")}</Text>
         </View>
       );
     }
@@ -689,7 +691,7 @@ function FilePreviewBody({
 
   return (
     <View style={styles.centerState}>
-      <Text style={styles.emptyText}>Binary preview unavailable</Text>
+      <Text style={styles.emptyText}>{t("panels.file.binaryPreviewUnavailable")}</Text>
       <Text style={styles.binaryMetaText}>{formatFileSize({ size: preview.size })}</Text>
     </View>
   );
@@ -704,6 +706,7 @@ export function FilePane({
   workspaceRoot: string;
   location: WorkspaceFileLocation;
 }) {
+  const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
   const showDesktopWebScrollbar = isWeb && !isMobile;
 
@@ -726,7 +729,10 @@ export function FilePane({
     enabled: Boolean(client && readTarget),
     queryFn: async () => {
       if (!client || !readTarget) {
-        return { file: null as ExplorerFile | null, error: "Host is not connected" };
+        return {
+          file: null as ExplorerFile | null,
+          error: t("workspace.terminal.hostDisconnected"),
+        };
       }
       try {
         const file = await client.readFile(readTarget.cwd, readTarget.path);
@@ -740,7 +746,7 @@ export function FilePane({
         return {
           file: null,
           imageAttachment: null,
-          error: error instanceof Error ? error.message : "Failed to load file",
+          error: error instanceof Error ? error.message : t("panels.file.failedToLoad"),
         };
       }
     },
