@@ -218,18 +218,18 @@ describe("host project list", () => {
     ).toMatchObject({ projectKind: "directory", canCreateWorktree: false });
   });
 
-  it("uses the checkout cwd for workspace-backed project creation", () => {
+  it("uses the workspace directory for workspace-backed project creation before checkout metadata", () => {
     expect(
       hostProjectFromWorkspace({
         serverId: "host-a",
         workspace: workspace({
           projectRootPath: "/repo/a",
-          workspaceDirectory: "/repo/a",
+          workspaceDirectory: "/repo/a/packages/app",
           project: {
             projectKey: "project-a",
             projectName: "Project A",
             checkout: {
-              cwd: "/repo/a/packages/app",
+              cwd: "/repo/a",
               isGit: true,
               currentBranch: "main",
               remoteUrl: null,

@@ -170,8 +170,8 @@ export function resolveWorkspaceDescriptorExecutionDirectory(
   workspace: WorkspaceExecutionDirectoryLike | null | undefined,
 ): string | null {
   return (
-    normalizeWorkspacePath(workspace?.project?.checkout?.cwd) ??
-    normalizeWorkspacePath(workspace?.workspaceDirectory)
+    normalizeWorkspacePath(workspace?.workspaceDirectory) ??
+    normalizeWorkspacePath(workspace?.project?.checkout?.cwd)
   );
 }
 

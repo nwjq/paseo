@@ -279,19 +279,19 @@ describe("workspace structure composition", () => {
     });
   });
 
-  it("uses checkout cwd for project-level creation when workspace directory is the repo root", () => {
+  it("uses workspace directory for project-level creation before checkout metadata", () => {
     const workspace = createWorkspace({
       id: "workspace-subdir",
       projectId: "project-a",
       projectDisplayName: "Project A",
       projectRootPath: "/repo/main",
-      workspaceDirectory: "/repo/main",
+      workspaceDirectory: "/repo/main/packages/app",
       workspaceKind: "local_checkout",
       project: {
         projectKey: "project-a",
         projectName: "Project A",
         checkout: {
-          cwd: "/repo/main/packages/app",
+          cwd: "/repo/main",
           isGit: true,
           currentBranch: "main",
           remoteUrl: null,

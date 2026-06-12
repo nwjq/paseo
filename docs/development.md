@@ -394,14 +394,19 @@ The frontend risk is not only the active-workspace actions. The project header f
 
 There is also a server-side second-hop risk: when the source `cwd` is inside an existing Paseo-managed worktree, preserve the relative subdirectory against that worktree's own git root, not the shared main repo root. If upstream collapses those two roots together, the first subdirectory worktree may be correct but the next worktree created from it will fall back to the worktree root instead of staying in the subdirectory.
 
+On macOS, temporary paths may appear as both `/var/...` and `/private/var/...`. Compare real paths when deciding whether the source `cwd` is inside the repo root; otherwise a valid subdirectory can look outside the repo and the new workspace will incorrectly register at the worktree root.
+
 After any upstream merge or rebase that touches those paths, re-run only the narrow checks for this invariant before shipping your fork:
 
 ```bash
 npx vitest run packages/server/src/server/paseo-worktree-service.test.ts --bail=1
 npx vitest run packages/server/src/server/session.test.ts --bail=1
+npx vitest run packages/server/src/server/session.workspaces.test.ts --bail=1
+npx vitest run packages/server/src/server/session.workspace-resolution-invariants.test.ts --bail=1
 npx vitest run packages/server/src/server/worktree-session.test.ts --bail=1
-npx vitest run packages/app/src/stores/session-store-hooks.test.ts --bail=1
-npx vitest run packages/app/src/hooks/use-sidebar-workspaces-list.test.ts --bail=1
+npx vitest run packages/app/src/utils/workspace-execution.test.ts --bail=1
+npx vitest run packages/app/src/stores/session-store-hooks/selectors.test.ts --bail=1
+npx vitest run packages/app/src/hooks/sidebar-workspaces-view-model.test.ts --bail=1
 npx vitest run packages/app/src/components/sidebar-workspace-list.test.tsx --bail=1
 npx vitest run packages/app/src/utils/workspace-archive-navigation.test.ts --bail=1
 npx vitest run packages/app/src/utils/sidebar-workspace-directory.test.ts --bail=1

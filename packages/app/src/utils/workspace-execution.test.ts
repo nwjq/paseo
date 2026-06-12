@@ -76,17 +76,17 @@ describe("resolveWorkspaceIdByExecutionDirectory", () => {
     ).toBeNull();
   });
 
-  it("matches the checkout cwd when it differs from the workspace root", () => {
+  it("matches the workspace directory before checkout metadata", () => {
     const workspaces = [
       createWorkspace({
         id: "workspace-1",
         projectRootPath: "/repo",
-        workspaceDirectory: "/repo",
+        workspaceDirectory: "/repo/packages/app",
         project: {
           projectKey: "project-1",
           projectName: "Project",
           checkout: {
-            cwd: "/repo/packages/app",
+            cwd: "/repo",
             isGit: true,
             currentBranch: "main",
             remoteUrl: null,
@@ -104,6 +104,13 @@ describe("resolveWorkspaceIdByExecutionDirectory", () => {
         workspaceDirectory: "/repo/packages/app",
       }),
     ).toBe("workspace-1");
+
+    expect(
+      resolveWorkspaceIdByExecutionDirectory({
+        workspaces,
+        workspaceDirectory: "/repo",
+      }),
+    ).toBeNull();
   });
 });
 
@@ -209,11 +216,44 @@ describe("workspace execution authority", () => {
     });
   });
 
-  it("uses the checkout cwd as the execution directory when the workspace root is broader", () => {
+  it("uses the workspace directory as the execution directory before checkout metadata", () => {
     const workspace = createWorkspace({
       id: "workspace-1",
       projectRootPath: "/repo",
-      workspaceDirectory: "/repo",
+      workspaceDirectory: "/repo/packages/app",
+      project: {
+        projectKey: "project-1",
+        projectName: "Project",
+        checkout: {
+          cwd: "/repo",
+          isGit: true,
+          currentBranch: "main",
+          remoteUrl: null,
+          worktreeRoot: "/repo",
+          isPaseoOwnedWorktree: false,
+          mainRepoRoot: null,
+        },
+      },
+    });
+    const workspaces = new Map<string, WorkspaceDescriptor>([["workspace-1", workspace]]);
+
+    expect(
+      requireWorkspaceExecutionAuthority({
+        workspaces,
+        workspaceId: "workspace-1",
+      }),
+    ).toEqual({
+      workspaceId: "workspace-1",
+      workspaceDirectory: "/repo/packages/app",
+      workspace,
+    });
+  });
+
+  it("falls back to checkout metadata only when the workspace directory is missing", () => {
+    const workspace = createWorkspace({
+      id: "workspace-1",
+      projectRootPath: "/repo",
+      workspaceDirectory: " ",
       project: {
         projectKey: "project-1",
         projectName: "Project",

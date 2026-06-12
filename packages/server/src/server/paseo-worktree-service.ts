@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import path from "node:path";
 
 import type { WorkspaceGitService } from "./workspace-git-service.js";
@@ -208,6 +209,14 @@ function isPathInsideRoot(input: { path: string; root: string }): boolean {
   return normalizedPath.startsWith(rootPrefix);
 }
 
+function normalizeExistingPathForComparison(value: string): string {
+  try {
+    return normalizeWorkspaceId(realpathSync.native(value));
+  } catch {
+    return normalizeWorkspaceId(value);
+  }
+}
+
 function resolveWorktreeWorkspaceDirectory(options: {
   inputCwd: string;
   repoRoot: string;
@@ -216,8 +225,10 @@ function resolveWorktreeWorkspaceDirectory(options: {
   const normalizedInputCwd = normalizeWorkspaceId(options.inputCwd);
   const normalizedRepoRoot = normalizeWorkspaceId(options.repoRoot);
   const normalizedWorktreePath = normalizeWorkspaceId(options.worktreePath);
+  const comparisonInputCwd = normalizeExistingPathForComparison(normalizedInputCwd);
+  const comparisonRepoRoot = normalizeExistingPathForComparison(normalizedRepoRoot);
 
-  const relativeFromRepoRoot = path.relative(normalizedRepoRoot, normalizedInputCwd);
+  const relativeFromRepoRoot = path.relative(comparisonRepoRoot, comparisonInputCwd);
   if (!relativeFromRepoRoot || relativeFromRepoRoot === ".") {
     return normalizedWorktreePath;
   }
