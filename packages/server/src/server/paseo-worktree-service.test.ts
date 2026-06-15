@@ -127,6 +127,38 @@ test("preserves subdirectory mapping when creating from an existing paseo worktr
   expect(second.workspace.workspaceId).toMatch(/^wks_[0-9a-f]{16}$/);
 });
 
+test("infers subdirectory from existing workspace when app sends repo root as cwd", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const subdirectory = path.join(repoDir, "fitnexa2");
+  mkdirSync(subdirectory, { recursive: true });
+  writeFileSync(path.join(subdirectory, "index.ts"), "export default 1;\n");
+  execFileSync("git", ["add", "fitnexa2/index.ts"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "add fitnexa2"], { cwd: repoDir, stdio: "pipe" });
+
+  const deps = createDeps();
+  const sourceWorkspace = createPersistedWorkspaceRecordForTest({
+    workspaceId: "ws-subdir-checkout",
+    projectId: repoDir,
+    cwd: subdirectory,
+    kind: "local_checkout",
+    displayName: "develop",
+  });
+  deps.workspaces.set(sourceWorkspace.workspaceId, sourceWorkspace);
+
+  const result = await createPaseoWorktree(
+    {
+      cwd: repoDir,
+      worktreeSlug: "from-root-cwd",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    deps,
+  );
+
+  expect(result.workspace.cwd).toBe(path.join(result.worktree.worktreePath, "fitnexa2"));
+});
+
 test("registers a new worktree in the existing root project after the main checkout workspace is removed", async () => {
   const { repoDir, tempDir } = createGitRepo();
   cleanupPaths.push(tempDir);

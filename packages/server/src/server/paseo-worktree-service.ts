@@ -235,8 +235,13 @@ async function upsertWorkspaceForWorktree(options: {
     "projectRegistry" | "workspaceRegistry" | "workspaceGitService"
   >;
 }): Promise<PersistedWorkspaceRecord> {
-  const normalizedCwd = resolveWorktreeWorkspaceDirectory({
+  const effectiveInputCwd = await resolveEffectiveInputCwd({
     inputCwd: options.inputCwd,
+    sourceRepoRoot: options.sourceRepoRoot,
+    workspaceRegistry: options.deps.workspaceRegistry,
+  });
+  const normalizedCwd = resolveWorktreeWorkspaceDirectory({
+    inputCwd: effectiveInputCwd,
     sourceRepoRoot: options.sourceRepoRoot,
     worktreePath: options.worktree.worktreePath,
   });
@@ -386,6 +391,36 @@ async function resolveSourceProjectForWorktree(options: {
     repoRoot: options.repoRoot,
     projectRegistry: options.deps.projectRegistry,
   });
+}
+
+async function resolveEffectiveInputCwd(options: {
+  inputCwd: string;
+  sourceRepoRoot: string;
+  workspaceRegistry: Pick<WorkspaceRegistry, "list">;
+}): Promise<string> {
+  const normalizedInput = resolve(options.inputCwd);
+  const normalizedRoot = resolve(options.sourceRepoRoot);
+
+  function resolveSafe(p: string): string {
+    try {
+      return realpathSync.native(p);
+    } catch {
+      return p;
+    }
+  }
+
+  if (resolveSafe(normalizedInput) !== resolveSafe(normalizedRoot)) {
+    return normalizedInput;
+  }
+  const workspaces = await options.workspaceRegistry.list();
+  const subdirWorkspace = workspaces.find((ws) => {
+    if (ws.archivedAt) return false;
+    const resolvedCwd = resolveSafe(resolve(ws.cwd));
+    const resolvedRoot = resolveSafe(normalizedRoot);
+    const prefix = resolvedRoot.endsWith("/") ? resolvedRoot : `${resolvedRoot}/`;
+    return resolvedCwd.startsWith(prefix);
+  });
+  return subdirWorkspace?.cwd ?? normalizedInput;
 }
 
 async function findWorkspaceForSource(options: {
