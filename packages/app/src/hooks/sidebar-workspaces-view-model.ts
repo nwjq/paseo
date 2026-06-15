@@ -8,6 +8,12 @@ import type { WorkspaceStructureProject } from "@/projects/workspace-structure";
 
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
 
+function workspaceNameFromDirectory(directory: string): string {
+  const trimmed = directory.trim().replace(/[\\/]+$/g, "");
+  const separator = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  return separator >= 0 ? trimmed.slice(separator + 1) : trimmed;
+}
+
 export type SidebarStateBucket = WorkspaceDescriptor["status"];
 
 export interface SidebarWorkspaceEntry {
@@ -17,7 +23,6 @@ export interface SidebarWorkspaceEntry {
   projectKey: string;
   projectRootPath?: string;
   workspaceDirectory?: string;
-  project?: WorkspaceDescriptor["project"];
   projectKind: WorkspaceDescriptor["projectKind"];
   workspaceKind: WorkspaceDescriptor["workspaceKind"];
   name: string;
@@ -36,9 +41,7 @@ export interface SidebarProjectEntry {
   projectKey: string;
   projectName: string;
   projectKind: WorkspaceDescriptor["projectKind"];
-  projectRootPath: string;
   iconWorkingDir: string;
-  creationWorkingDir: string;
   canCreateWorktree: boolean;
   workspaces: SidebarWorkspaceEntry[];
 }
@@ -53,12 +56,11 @@ function createStructuralWorkspaceEntry(input: {
     serverId: input.serverId,
     workspaceId: input.workspaceId,
     projectKey: input.project.projectKey,
-    projectRootPath: input.project.projectRootPath,
+    projectRootPath: input.project.iconWorkingDir,
     workspaceDirectory: undefined,
-    project: undefined,
     projectKind: input.project.projectKind,
     workspaceKind: "checkout",
-    name: input.workspaceId,
+    name: workspaceNameFromDirectory(input.project.iconWorkingDir) || input.workspaceId,
     statusBucket: "done",
     statusEnteredAt: null,
     archivingAt: null,
@@ -81,9 +83,7 @@ export function buildSidebarProjectsFromStructure(input: {
       projectKey: project.projectKey,
       projectName: project.projectName,
       projectKind: project.projectKind,
-      projectRootPath: project.projectRootPath,
       iconWorkingDir: project.iconWorkingDir,
-      creationWorkingDir: project.creationWorkingDir,
       workspaceKeys: project.workspaceKeys,
       canCreateWorktree: canCreateWorktreeForProjectKind(project.projectKind),
     })),
@@ -101,9 +101,7 @@ export function buildSidebarProjectsFromHostProjects(input: {
     projectKey: project.projectKey,
     projectName: project.projectName,
     projectKind: project.projectKind,
-    projectRootPath: project.projectRootPath,
     iconWorkingDir: project.iconWorkingDir,
-    creationWorkingDir: project.creationWorkingDir,
     canCreateWorktree: project.canCreateWorktree,
     workspaces: project.workspaceKeys.map((workspaceId) =>
       createStructuralWorkspaceEntry({

@@ -9,7 +9,6 @@ import type {
   CreatePaseoWorktreeWorkflowResult,
 } from "../worktree-session.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
-import type { WorkspaceRegistry } from "../workspace-registry.js";
 import type {
   CreateAgentWorktreeTarget,
   FirstAgentContext,
@@ -25,9 +24,9 @@ interface CreateAgentLifecycleDispatchDependencies {
   agentStorage: AgentStorage;
   github: GitHubService;
   workspaceGitService: WorkspaceGitService;
-  workspaceRegistry: Pick<WorkspaceRegistry, "list">;
   createPaseoWorktreeWorkflow: CreatePaseoWorktreeWorkflowFn;
   archiveAgentForClose: (agentId: string) => Promise<unknown>;
+  resolveWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
   emit: (message: SessionOutboundMessage) => void;
   emitAgentRemove: (agentId: string) => void;
@@ -207,9 +206,9 @@ export class CreateAgentLifecycleDispatch {
         worktreesRoot: this.dependencies.worktreesRoot,
         github: this.dependencies.github,
         workspaceGitService: this.dependencies.workspaceGitService,
-        workspaceRegistry: this.dependencies.workspaceRegistry,
         agentManager: this.dependencies.agentManager,
         agentStorage: this.dependencies.agentStorage,
+        resolveWorkspaceIdForCwd: this.dependencies.resolveWorkspaceIdForCwd,
         archiveWorkspaceRecord: this.dependencies.archiveWorkspaceRecord,
         emitWorkspaceUpdatesForWorkspaceIds: this.dependencies.emitWorkspaceUpdatesForWorkspaceIds,
         markWorkspaceArchiving: this.dependencies.markWorkspaceArchiving,

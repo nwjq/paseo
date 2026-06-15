@@ -45,9 +45,7 @@ function project(projectKey: string, workspaces: SidebarWorkspaceEntry[]): Sideb
     projectKey,
     projectName: projectKey,
     projectKind: "git",
-    projectRootPath: workspaces[0]?.workspaceDirectory ?? "",
     iconWorkingDir: workspaces[0]?.workspaceDirectory ?? "",
-    creationWorkingDir: workspaces[0]?.workspaceDirectory ?? "",
     canCreateWorktree: true,
     workspaces,
   };

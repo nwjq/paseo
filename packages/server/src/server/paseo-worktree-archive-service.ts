@@ -2,9 +2,7 @@ import type { Logger } from "pino";
 
 import type { AgentManager } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
-import type { WorkspaceRegistry } from "./workspace-registry.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
-import { normalizeWorkspaceId as normalizePersistedWorkspaceId } from "./workspace-registry-model.js";
 import type { GitHubService } from "../services/github-service.js";
 import {
   deletePaseoWorktree,
@@ -18,9 +16,9 @@ export interface ArchivePaseoWorktreeDependencies {
   worktreesRoot?: string;
   github: GitHubService;
   workspaceGitService: Pick<WorkspaceGitService, "getSnapshot">;
-  workspaceRegistry: Pick<WorkspaceRegistry, "list">;
   agentManager: Pick<AgentManager, "listAgents" | "archiveAgent" | "archiveSnapshot">;
   agentStorage: Pick<AgentStorage, "list">;
+  resolveWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
   emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
@@ -38,18 +36,6 @@ export interface KillTerminalsUnderPathDependencies {
   terminalManager: TerminalManager | null;
 }
 
-type LiveAgentRecord = ReturnType<
-  ArchivePaseoWorktreeDependencies["agentManager"]["listAgents"]
->[number];
-
-interface ArchiveTargetSnapshot {
-  archivedAgents: Set<string>;
-  affectedWorkspaceCwds: Set<string>;
-  affectedWorkspaceIds: Set<string>;
-  liveAgents: LiveAgentRecord[];
-  matchingStoredRecords: StoredAgentRecord[];
-}
-
 export async function archivePaseoWorktree(
   dependencies: ArchivePaseoWorktreeDependencies,
   options: {
@@ -60,23 +46,54 @@ export async function archivePaseoWorktree(
     requestId: string;
   },
 ): Promise<string[]> {
-  const targetPath = await resolveArchiveTargetPath(dependencies, options);
-  const {
-    archivedAgents,
-    affectedWorkspaceCwds,
-    affectedWorkspaceIds,
-    liveAgents,
-    matchingStoredRecords,
-  } = await collectArchiveTargetSnapshot(dependencies, targetPath);
+  let targetPath = options.targetPath;
+  const resolvedWorktree = await resolvePaseoWorktreeRootForCwd(targetPath, {
+    paseoHome: dependencies.paseoHome,
+    worktreesRoot: options.worktreesBaseRoot ?? dependencies.worktreesRoot,
+  });
+  if (resolvedWorktree) {
+    targetPath = resolvedWorktree.worktreePath;
+  }
 
-  const affectedWorkspaceIdList = Array.from(affectedWorkspaceIds);
+  const archivedAgents = new Set<string>();
+  const affectedWorkspaceCwds = new Set<string>([targetPath]);
+
+  const liveAgents = dependencies.agentManager
+    .listAgents()
+    .filter((agent) => dependencies.isPathWithinRoot(targetPath, agent.cwd));
+  for (const agent of liveAgents) {
+    archivedAgents.add(agent.id);
+    affectedWorkspaceCwds.add(agent.cwd);
+  }
+
+  let storedRecords: StoredAgentRecord[] = [];
+  try {
+    storedRecords = await dependencies.agentStorage.list();
+  } catch (error) {
+    dependencies.sessionLogger?.warn(
+      { err: error, targetPath },
+      "Failed to list stored agents during worktree archive; continuing",
+    );
+  }
+  const liveAgentIds = new Set(liveAgents.map((agent) => agent.id));
+  const matchingStoredRecords = storedRecords.filter((record) =>
+    dependencies.isPathWithinRoot(targetPath, record.cwd),
+  );
+  for (const record of matchingStoredRecords) {
+    archivedAgents.add(record.id);
+    affectedWorkspaceCwds.add(record.cwd);
+  }
+
+  const affectedWorkspaceIdList = await resolveAffectedWorkspaceIds(
+    dependencies,
+    affectedWorkspaceCwds,
+  );
   dependencies.markWorkspaceArchiving(affectedWorkspaceIdList, new Date().toISOString());
 
   try {
     await dependencies.emitWorkspaceUpdatesForWorkspaceIds(affectedWorkspaceIdList);
 
     const archivedAt = new Date().toISOString();
-    const liveAgentIds = new Set(liveAgents.map((agent) => agent.id));
     const archiveResults = await Promise.allSettled([
       ...liveAgents.map((agent) => dependencies.agentManager.archiveAgent(agent.id)),
       ...matchingStoredRecords
@@ -84,7 +101,15 @@ export async function archivePaseoWorktree(
         .map((record) => dependencies.agentManager.archiveSnapshot(record.id, archivedAt)),
       dependencies.killTerminalsUnderPath(targetPath),
     ]);
-    logArchiveTeardownFailures(dependencies, targetPath, archiveResults);
+
+    for (const result of archiveResults) {
+      if (result.status === "rejected") {
+        dependencies.sessionLogger?.warn(
+          { err: result.reason, targetPath },
+          "Worktree archive teardown step failed; continuing",
+        );
+      }
+    }
 
     let teardownError: WorktreeTeardownError | null = null;
     try {
@@ -125,7 +150,20 @@ export async function archivePaseoWorktree(
       dependencies.github.invalidate({ cwd });
     }
 
-    await archiveWorkspaceRecords(dependencies, affectedWorkspaceIdList, teardownError);
+    await Promise.all(
+      affectedWorkspaceIdList.map(async (workspaceId) => {
+        try {
+          await dependencies.archiveWorkspaceRecord(workspaceId);
+        } catch (error) {
+          dependencies.sessionLogger?.warn(
+            { err: error, workspaceId },
+            teardownError
+              ? "Failed to archive workspace record after teardown failed"
+              : "Failed to archive workspace record; worktree FS already removed",
+          );
+        }
+      }),
+    );
 
     if (teardownError) {
       throw teardownError;
@@ -138,134 +176,26 @@ export async function archivePaseoWorktree(
   return Array.from(archivedAgents);
 }
 
-async function resolveArchiveTargetPath(
-  dependencies: ArchivePaseoWorktreeDependencies,
-  options: {
-    targetPath: string;
-    worktreesBaseRoot?: string;
-  },
-): Promise<string> {
-  const resolvedWorktree = await resolvePaseoWorktreeRootForCwd(options.targetPath, {
-    paseoHome: dependencies.paseoHome,
-    worktreesRoot: options.worktreesBaseRoot ?? dependencies.worktreesRoot,
-  });
-  return resolvedWorktree?.worktreePath ?? options.targetPath;
-}
-
-async function collectArchiveTargetSnapshot(
-  dependencies: ArchivePaseoWorktreeDependencies,
-  targetPath: string,
-): Promise<ArchiveTargetSnapshot> {
-  const archivedAgents = new Set<string>();
-  const affectedWorkspaceCwds = new Set<string>([targetPath]);
-  const affectedWorkspaceIds = new Set<string>([normalizePersistedWorkspaceId(targetPath)]);
-
-  await addMatchingPersistedWorkspaces(dependencies, targetPath, {
-    affectedWorkspaceCwds,
-    affectedWorkspaceIds,
-  });
-
-  const liveAgents = dependencies.agentManager
-    .listAgents()
-    .filter((agent) => dependencies.isPathWithinRoot(targetPath, agent.cwd));
-  for (const agent of liveAgents) {
-    archivedAgents.add(agent.id);
-    affectedWorkspaceCwds.add(agent.cwd);
-    affectedWorkspaceIds.add(normalizePersistedWorkspaceId(agent.cwd));
-  }
-
-  const matchingStoredRecords = (await listStoredAgentsForArchive(dependencies, targetPath)).filter(
-    (record) => dependencies.isPathWithinRoot(targetPath, record.cwd),
-  );
-  for (const record of matchingStoredRecords) {
-    archivedAgents.add(record.id);
-    affectedWorkspaceCwds.add(record.cwd);
-    affectedWorkspaceIds.add(normalizePersistedWorkspaceId(record.cwd));
-  }
-
-  return {
-    archivedAgents,
-    affectedWorkspaceCwds,
-    affectedWorkspaceIds,
-    liveAgents,
-    matchingStoredRecords,
-  };
-}
-
-async function addMatchingPersistedWorkspaces(
-  dependencies: ArchivePaseoWorktreeDependencies,
-  targetPath: string,
-  output: {
-    affectedWorkspaceCwds: Set<string>;
-    affectedWorkspaceIds: Set<string>;
-  },
-): Promise<void> {
-  try {
-    const matchingWorkspaces = (await dependencies.workspaceRegistry.list()).filter(
-      (workspace) =>
-        !workspace.archivedAt && dependencies.isPathWithinRoot(targetPath, workspace.cwd),
-    );
-    for (const workspace of matchingWorkspaces) {
-      output.affectedWorkspaceCwds.add(workspace.cwd);
-      output.affectedWorkspaceIds.add(normalizePersistedWorkspaceId(workspace.workspaceId));
-    }
-  } catch (error) {
-    dependencies.sessionLogger?.warn(
-      { err: error, targetPath },
-      "Failed to list persisted workspaces during worktree archive; continuing",
-    );
-  }
-}
-
-async function listStoredAgentsForArchive(
-  dependencies: ArchivePaseoWorktreeDependencies,
-  targetPath: string,
-): Promise<StoredAgentRecord[]> {
-  try {
-    return await dependencies.agentStorage.list();
-  } catch (error) {
-    dependencies.sessionLogger?.warn(
-      { err: error, targetPath },
-      "Failed to list stored agents during worktree archive; continuing",
-    );
-    return [];
-  }
-}
-
-function logArchiveTeardownFailures(
-  dependencies: ArchivePaseoWorktreeDependencies,
-  targetPath: string,
-  results: PromiseSettledResult<unknown>[],
-): void {
-  for (const result of results) {
-    if (result.status === "rejected") {
+async function resolveAffectedWorkspaceIds(
+  dependencies: Pick<
+    ArchivePaseoWorktreeDependencies,
+    "resolveWorkspaceIdForCwd" | "sessionLogger"
+  >,
+  cwds: Iterable<string>,
+): Promise<string[]> {
+  const workspaceIds = new Set<string>();
+  for (const cwd of cwds) {
+    const workspaceId = await dependencies.resolveWorkspaceIdForCwd(cwd);
+    if (!workspaceId) {
       dependencies.sessionLogger?.warn(
-        { err: result.reason, targetPath },
-        "Worktree archive teardown step failed; continuing",
+        { cwd },
+        "Skipping workspace archive update for unregistered directory",
       );
+      continue;
     }
+    workspaceIds.add(workspaceId);
   }
-}
-
-async function archiveWorkspaceRecords(
-  dependencies: ArchivePaseoWorktreeDependencies,
-  workspaceIds: string[],
-  teardownError: WorktreeTeardownError | null,
-): Promise<void> {
-  await Promise.all(
-    workspaceIds.map(async (workspaceId) => {
-      try {
-        await dependencies.archiveWorkspaceRecord(workspaceId);
-      } catch (error) {
-        dependencies.sessionLogger?.warn(
-          { err: error, workspaceId },
-          teardownError
-            ? "Failed to archive workspace record after teardown failed"
-            : "Failed to archive workspace record; worktree FS already removed",
-        );
-      }
-    }),
-  );
+  return Array.from(workspaceIds);
 }
 
 export async function killTerminalsUnderPath(

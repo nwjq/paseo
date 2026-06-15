@@ -8,7 +8,7 @@ import {
   selectRecommendedProjectPaths,
   selectResolveWorkspaceIdByCwd,
   selectWorkspace,
-  selectWorkspaceExecutionAuthority,
+  selectWorkspaceDirectory,
   selectWorkspaceFields,
   selectWorkspaceKeys,
   selectWorkspaceOrderByScopeForServer,
@@ -38,7 +38,6 @@ function createWorkspace(
     statusEnteredAt: null,
     diffStat: input.diffStat ?? null,
     scripts: input.scripts ?? [],
-    project: input.project,
   };
 }
 
@@ -143,34 +142,30 @@ describe("selectWorkspace", () => {
   });
 });
 
-describe("selectWorkspaceExecutionAuthority", () => {
-  it("preserves the old missing-workspace message with the requested id", () => {
+describe("selectWorkspaceDirectory", () => {
+  it("returns the workspace directory, never the opaque workspace id", () => {
+    const workspace = createWorkspace({
+      id: "wks_3f9a2b1c",
+      workspaceDirectory: "/Users/dev/project",
+    });
+    initializeWorkspaces([workspace]);
+
+    const directory = selectWorkspaceDirectory(
+      useSessionStore.getState(),
+      SERVER_ID,
+      "wks_3f9a2b1c",
+    );
+
+    expect(directory).toBe("/Users/dev/project");
+    expect(directory).not.toBe("wks_3f9a2b1c");
+  });
+
+  it("returns null when the workspace is missing", () => {
     initializeWorkspaces([]);
 
     expect(
-      selectWorkspaceExecutionAuthority(useSessionStore.getState(), SERVER_ID, "missing-id"),
-    ).toMatchObject({
-      ok: false,
-      message: "Workspace not found: missing-id",
-    });
-  });
-
-  it("keeps deep-equal authority references under unrelated workspace updates", () => {
-    const workspaceA = createWorkspace({ id: "workspace-a", name: "A" });
-    const workspaceB = createWorkspace({ id: "workspace-b", name: "B" });
-    initializeWorkspaces([workspaceA, workspaceB]);
-
-    const tracked = trackSelector(
-      useSessionStore,
-      (state) => selectWorkspaceExecutionAuthority(state, SERVER_ID, workspaceA.id),
-      workspaceEqualityFns.deep,
-    );
-    const before = tracked.current;
-
-    useSessionStore.getState().mergeWorkspaces(SERVER_ID, [{ ...workspaceB, status: "running" }]);
-    expect(tracked.current).toBe(before);
-
-    tracked.stop();
+      selectWorkspaceDirectory(useSessionStore.getState(), SERVER_ID, "missing-id"),
+    ).toBeNull();
   });
 });
 
@@ -257,85 +252,6 @@ describe("workspace structure composition", () => {
     expect(tracked.current).not.toBe(before);
 
     tracked.stop();
-  });
-
-  it("prefers an exact subdirectory creation dir over the repo root fallback", () => {
-    const workspace = createWorkspace({
-      id: "workspace-subdir",
-      projectId: "project-a",
-      projectDisplayName: "Project A",
-      projectRootPath: "/repo/main",
-      workspaceDirectory: "/repo/main/packages/app",
-      workspaceKind: "local_checkout",
-    });
-    initializeWorkspaces([workspace]);
-
-    const projects = selectWorkspaceStructureProjects(useSessionStore.getState(), SERVER_ID);
-
-    expect(projects[0]).toMatchObject({
-      projectRootPath: "/repo/main",
-      iconWorkingDir: "/repo/main",
-      creationWorkingDir: "/repo/main/packages/app",
-    });
-  });
-
-  it("uses workspace directory for project-level creation before checkout metadata", () => {
-    const workspace = createWorkspace({
-      id: "workspace-subdir",
-      projectId: "project-a",
-      projectDisplayName: "Project A",
-      projectRootPath: "/repo/main",
-      workspaceDirectory: "/repo/main/packages/app",
-      workspaceKind: "local_checkout",
-      project: {
-        projectKey: "project-a",
-        projectName: "Project A",
-        checkout: {
-          cwd: "/repo/main",
-          isGit: true,
-          currentBranch: "main",
-          remoteUrl: null,
-          worktreeRoot: "/repo/main",
-          isPaseoOwnedWorktree: false,
-          mainRepoRoot: null,
-        },
-      },
-    });
-    initializeWorkspaces([workspace]);
-
-    const projects = selectWorkspaceStructureProjects(useSessionStore.getState(), SERVER_ID);
-
-    expect(projects[0]).toMatchObject({
-      projectRootPath: "/repo/main",
-      iconWorkingDir: "/repo/main",
-      creationWorkingDir: "/repo/main/packages/app",
-    });
-  });
-
-  it("prefers a checkout subdirectory over a worktree path for project-level creation", () => {
-    const worktree = createWorkspace({
-      id: "workspace-worktree",
-      projectId: "project-a",
-      projectDisplayName: "Project A",
-      projectRootPath: "/repo/main",
-      workspaceDirectory: "/tmp/.paseo/worktrees/feature/packages/app",
-      workspaceKind: "worktree",
-      name: "feature",
-    });
-    const checkout = createWorkspace({
-      id: "workspace-checkout",
-      projectId: "project-a",
-      projectDisplayName: "Project A",
-      projectRootPath: "/repo/main",
-      workspaceDirectory: "/repo/main/packages/app",
-      workspaceKind: "local_checkout",
-      name: "main",
-    });
-    initializeWorkspaces([worktree, checkout]);
-
-    const projects = selectWorkspaceStructureProjects(useSessionStore.getState(), SERVER_ID);
-
-    expect(projects[0]?.creationWorkingDir).toBe("/repo/main/packages/app");
   });
 
   it("changes the composed structure when persisted sidebar project order changes", () => {

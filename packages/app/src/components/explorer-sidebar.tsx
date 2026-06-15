@@ -13,9 +13,12 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
-import { GitHubIcon } from "@/components/icons/github-icon";
-import { PrPane } from "@/git/pr-pane";
-import { usePrPaneData } from "@/hooks/use-pr-pane-data";
+import {
+  formatPrTabLabel,
+  PullRequestPane,
+  PullRequestTabIcon,
+  usePrPaneData,
+} from "@/git/pull-request-panel";
 import {
   usePanelStore,
   selectIsFileExplorerOpen,
@@ -33,6 +36,7 @@ import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useWindowControlsPadding } from "@/utils/desktop-window";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { isWeb } from "@/constants/platform";
+import { buildWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 
 const MIN_CHAT_WIDTH = 400;
 function logExplorerSidebar(_event: string, _details: Record<string, unknown>): void {}
@@ -93,6 +97,7 @@ export function ExplorerSidebar({
     windowWidth,
     animateToOpen,
     animateToClose,
+    overlayVisible,
     isGesturing,
     gestureAnimatingRef,
     closeGestureRef,
@@ -261,7 +266,6 @@ export function ExplorerSidebar({
 
   const backdropAnimatedStyle = useAnimatedStyle(() => ({
     opacity: backdropOpacity.value,
-    pointerEvents: backdropOpacity.value > 0.01 ? "auto" : "none",
   }));
 
   const resizeAnimatedStyle = useAnimatedStyle(() => ({
@@ -269,8 +273,15 @@ export function ExplorerSidebar({
   }));
 
   const backdropCombinedStyle = useMemo(
-    () => [explorerStaticStyles.backdrop, backdropAnimatedStyle],
-    [backdropAnimatedStyle],
+    () => [
+      explorerStaticStyles.backdrop,
+      backdropAnimatedStyle,
+      // pointerEvents is React-owned, not worklet-owned: Reanimated never
+      // touches it, so a stale animated-prop revert can't wedge an invisible
+      // tap-eating backdrop.
+      { pointerEvents: isOpen ? ("auto" as const) : ("none" as const) },
+    ],
+    [backdropAnimatedStyle, isOpen],
   );
   const mobileSidebarStyle = useMemo(
     () => [
@@ -290,6 +301,16 @@ export function ExplorerSidebar({
       sidebarAnimatedStyle,
       mobileKeyboardInsetStyle,
     ],
+  );
+  // display is React-owned on the plain wrapper View (no animated styles), so
+  // a hidden overlay stays hidden no matter what Reanimated's Fabric overlay
+  // reverts the panel transform to after a heavy commit (reanimated#9635).
+  const overlayStyle = useMemo(
+    () => [
+      StyleSheet.absoluteFillObject,
+      { display: overlayVisible ? ("flex" as const) : ("none" as const) },
+    ],
+    [overlayVisible],
   );
   const desktopSidebarStyle = useMemo(
     () => [explorerStaticStyles.desktopSidebar, resizeAnimatedStyle, { paddingTop: insets.top }],
@@ -311,7 +332,7 @@ export function ExplorerSidebar({
 
   if (isMobile) {
     return (
-      <View style={StyleSheet.absoluteFillObject} pointerEvents={overlayPointerEvents}>
+      <View style={overlayStyle} pointerEvents={overlayPointerEvents}>
         {/* Backdrop */}
         <Animated.View style={backdropCombinedStyle} />
 
@@ -433,7 +454,11 @@ function SidebarContent({
     !isGit && (activeTab === "changes" || activeTab === "pr") ? "files" : activeTab;
   const resolvedTab: ExplorerTab =
     requestedTab === "pr" && !hasPullRequest ? "changes" : requestedTab;
-  const prTabLabel = prPane.prNumber === null ? "" : `#${prPane.prNumber}`;
+  const prTabLabel = formatPrTabLabel(prPane.prNumber);
+  const workspaceAttachmentScopeKey = useMemo(
+    () => buildWorkspaceAttachmentScopeKey({ serverId, workspaceId, cwd: workspaceRoot }),
+    [serverId, workspaceId, workspaceRoot],
+  );
 
   const headerStyle = useMemo(
     () => [styles.header, { paddingRight: padding.right }],
@@ -470,7 +495,7 @@ function SidebarContent({
               onTabPress={onTabPress}
               testID="explorer-tab-pr"
             >
-              <GitHubIcon
+              <PullRequestTabIcon
                 size={13}
                 color={
                   resolvedTab === "pr" ? theme.colors.foreground : theme.colors.foregroundMuted
@@ -507,7 +532,14 @@ function SidebarContent({
             onOpenFile={onOpenFile}
           />
         )}
-        {resolvedTab === "pr" && prPane.data && <PrPane data={prPane.data} />}
+        {resolvedTab === "pr" && prPane.data && (
+          <PullRequestPane
+            serverId={serverId}
+            cwd={workspaceRoot}
+            data={prPane.data}
+            workspaceAttachmentScopeKey={workspaceAttachmentScopeKey}
+          />
+        )}
       </View>
     </View>
   );

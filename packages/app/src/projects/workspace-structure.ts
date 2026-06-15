@@ -1,14 +1,11 @@
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
-import { resolveWorkspaceDescriptorExecutionDirectory } from "@/utils/workspace-execution";
 
 export interface WorkspaceStructureProject {
   projectKey: string;
   projectName: string;
   projectKind: WorkspaceDescriptor["projectKind"];
-  projectRootPath: string;
   iconWorkingDir: string;
-  creationWorkingDir: string;
   workspaceKeys: string[];
 }
 
@@ -45,19 +42,6 @@ function compareWorkspaceStructureProjects(
   });
 }
 
-function rankProjectCreationDirectoryCandidate(workspace: WorkspaceDescriptor): number {
-  const workspaceDirectory = resolveWorkspaceDescriptorExecutionDirectory(workspace) ?? "";
-  if (!workspaceDirectory) {
-    return Number.NEGATIVE_INFINITY;
-  }
-
-  let score = workspace.workspaceKind === "worktree" ? 0 : 100;
-  if (workspaceDirectory !== workspace.projectRootPath.trim()) {
-    score += 10;
-  }
-  return score + workspaceDirectory.length / 1000;
-}
-
 export function buildWorkspaceStructureProjects(input: {
   serverId: string;
   workspaces: Iterable<WorkspaceDescriptor>;
@@ -70,7 +54,6 @@ export function buildWorkspaceStructureProjects(input: {
   const byProject = new Map<
     string,
     WorkspaceStructureProject & {
-      creationWorkingDirRank: number;
       workspaces: Array<{ workspaceId: string; workspaceName: string; workspaceKey: string }>;
     }
   >();
@@ -83,24 +66,12 @@ export function buildWorkspaceStructureProjects(input: {
         projectName:
           workspace.projectDisplayName || projectDisplayNameFromProjectId(workspace.projectId),
         projectKind: workspace.projectKind,
-        projectRootPath: workspace.projectRootPath,
         iconWorkingDir: workspace.projectRootPath,
-        creationWorkingDir:
-          resolveWorkspaceDescriptorExecutionDirectory(workspace) ?? workspace.workspaceDirectory,
-        creationWorkingDirRank: rankProjectCreationDirectoryCandidate(workspace),
         workspaceKeys: [],
         workspaces: [],
       } satisfies WorkspaceStructureProject & {
-        creationWorkingDirRank: number;
         workspaces: Array<{ workspaceId: string; workspaceName: string; workspaceKey: string }>;
       });
-
-    const creationWorkingDirRank = rankProjectCreationDirectoryCandidate(workspace);
-    if (creationWorkingDirRank > project.creationWorkingDirRank) {
-      project.creationWorkingDir =
-        resolveWorkspaceDescriptorExecutionDirectory(workspace) ?? workspace.workspaceDirectory;
-      project.creationWorkingDirRank = creationWorkingDirRank;
-    }
 
     project.workspaces.push({
       workspaceId: workspace.id,
@@ -111,7 +82,7 @@ export function buildWorkspaceStructureProjects(input: {
   }
 
   const projects = Array.from(byProject.values()).map(
-    ({ workspaces: projectWorkspaces, creationWorkingDirRank: _rank, ...project }) => {
+    ({ workspaces: projectWorkspaces, ...project }) => {
       const sortedWorkspaces = [...projectWorkspaces].sort(compareWorkspaceStructureItems);
 
       return Object.assign({}, project, {

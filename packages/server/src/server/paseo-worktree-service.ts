@@ -1,7 +1,5 @@
-import { realpathSync } from "node:fs";
-import path from "node:path";
-
 import type { WorkspaceGitService } from "./workspace-git-service.js";
+import { resolve } from "node:path";
 import {
   type PersistedWorkspaceRecord,
   type ProjectRegistry,
@@ -9,7 +7,7 @@ import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
 } from "./workspace-registry.js";
-import { deriveProjectGroupingName, normalizeWorkspaceId } from "./workspace-registry-model.js";
+import { deriveProjectGroupingName, generateWorkspaceId } from "./workspace-registry-model.js";
 import {
   createWorktreeCore,
   type CreateWorktreeCoreDeps,
@@ -67,12 +65,11 @@ export async function createPaseoWorktree(
     inputCwd: input.cwd,
     projectId: input.projectId,
     repoRoot: createdWorktree.repoRoot,
-    sourceRepoRoot: createdWorktree.sourceRepoRoot,
     worktree: createdWorktree.worktree,
     deps,
   });
 
-  deps.github.invalidate({ cwd: workspace.cwd });
+  deps.github.invalidate({ cwd: createdWorktree.worktree.worktreePath });
 
   return {
     worktree: createdWorktree.worktree,
@@ -194,73 +191,19 @@ function maybeMarkFirstAgentBranchAutoNameEligible(options: {
   });
 }
 
-function normalizePathForPrefixComparison(value: string): string {
-  const normalized = value.replace(/\\/g, "/");
-  return /^[A-Za-z]:/.test(normalized) ? normalized.toLowerCase() : normalized;
-}
-
-function isPathInsideRoot(input: { path: string; root: string }): boolean {
-  const normalizedPath = normalizePathForPrefixComparison(input.path);
-  const normalizedRoot = normalizePathForPrefixComparison(input.root);
-  if (normalizedPath === normalizedRoot) {
-    return true;
-  }
-  const rootPrefix = normalizedRoot.endsWith("/") ? normalizedRoot : `${normalizedRoot}/`;
-  return normalizedPath.startsWith(rootPrefix);
-}
-
-function normalizeExistingPathForComparison(value: string): string {
-  try {
-    return normalizeWorkspaceId(realpathSync.native(value));
-  } catch {
-    return normalizeWorkspaceId(value);
-  }
-}
-
-function resolveWorktreeWorkspaceDirectory(options: {
-  inputCwd: string;
-  repoRoot: string;
-  worktreePath: string;
-}): string {
-  const normalizedInputCwd = normalizeWorkspaceId(options.inputCwd);
-  const normalizedRepoRoot = normalizeWorkspaceId(options.repoRoot);
-  const normalizedWorktreePath = normalizeWorkspaceId(options.worktreePath);
-  const comparisonInputCwd = normalizeExistingPathForComparison(normalizedInputCwd);
-  const comparisonRepoRoot = normalizeExistingPathForComparison(normalizedRepoRoot);
-
-  const relativeFromRepoRoot = path.relative(comparisonRepoRoot, comparisonInputCwd);
-  if (!relativeFromRepoRoot || relativeFromRepoRoot === ".") {
-    return normalizedWorktreePath;
-  }
-  if (relativeFromRepoRoot.startsWith("..") || path.isAbsolute(relativeFromRepoRoot)) {
-    return normalizedWorktreePath;
-  }
-
-  const mappedWorkspaceDirectory = normalizeWorkspaceId(
-    path.resolve(normalizedWorktreePath, relativeFromRepoRoot),
-  );
-  if (!isPathInsideRoot({ path: mappedWorkspaceDirectory, root: normalizedWorktreePath })) {
-    return normalizedWorktreePath;
-  }
-
-  return mappedWorkspaceDirectory;
-}
-
 async function upsertWorkspaceForWorktree(options: {
   inputCwd: string;
   projectId?: string;
   repoRoot: string;
-  sourceRepoRoot: string;
   worktree: WorktreeConfig;
-  deps: Pick<CreatePaseoWorktreeDeps, "projectRegistry" | "workspaceRegistry">;
+  deps: Pick<
+    CreatePaseoWorktreeDeps,
+    "projectRegistry" | "workspaceRegistry" | "workspaceGitService"
+  >;
 }): Promise<PersistedWorkspaceRecord> {
-  const normalizedCwd = resolveWorktreeWorkspaceDirectory({
-    inputCwd: options.inputCwd,
-    repoRoot: options.sourceRepoRoot,
-    worktreePath: options.worktree.worktreePath,
-  });
-  const normalizedInputCwd = normalizeWorkspaceId(options.inputCwd);
-  const normalizedRepoRoot = normalizeWorkspaceId(options.repoRoot);
+  const normalizedCwd = resolve(options.worktree.worktreePath);
+  const normalizedInputCwd = resolve(options.inputCwd);
+  const normalizedRepoRoot = resolve(options.repoRoot);
   const existingWorkspace = await findWorkspaceByDirectory(
     normalizedCwd,
     options.deps.workspaceRegistry,
@@ -272,7 +215,7 @@ async function upsertWorkspaceForWorktree(options: {
     existingWorkspace,
     deps: options.deps,
   });
-  const workspaceId = normalizedCwd;
+  const workspaceId = existingWorkspace?.workspaceId ?? generateWorkspaceId();
   const now = new Date().toISOString();
 
   await options.deps.projectRegistry.upsert(

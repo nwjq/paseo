@@ -1,8 +1,7 @@
 import type { Href } from "expo-router";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { buildHostNewWorkspaceRoute, buildHostRootRoute } from "@/utils/host-routes";
-import { resolveProjectCreationDirectory } from "@/utils/sidebar-workspace-directory";
-import { resolveWorkspaceRouteId } from "@/utils/workspace-execution";
+import { resolveWorkspaceRouteId } from "@/utils/workspace-identity";
 
 export function buildWorkspaceArchiveRedirectRoute(input: {
   serverId: string;
@@ -18,13 +17,8 @@ export function buildWorkspaceArchiveRedirectRoute(input: {
 
   const archivedWorkspace =
     Array.from(input.workspaces).find((workspace) => workspace.id === archivedWorkspaceId) ?? null;
-  if (!archivedWorkspace) {
-    return buildHostRootRoute(input.serverId);
-  }
-  const sourceDirectory = resolveProjectCreationDirectory({
-    projectIconWorkingDir: archivedWorkspace.projectRootPath,
-    workspaceDirectory: archivedWorkspace.workspaceDirectory,
-  });
+  const sourceDirectory =
+    archivedWorkspace?.projectRootPath || archivedWorkspace?.workspaceDirectory;
   if (!sourceDirectory) {
     return buildHostRootRoute(input.serverId);
   }

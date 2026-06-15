@@ -1,15 +1,12 @@
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import type { WorkspaceStructureProject } from "@/projects/workspace-structure";
-import { resolveWorkspaceDescriptorExecutionDirectory } from "@/utils/workspace-execution";
 
 export interface HostProjectListItem {
   serverId: string;
   projectKey: string;
   projectName: string;
   projectKind: WorkspaceDescriptor["projectKind"];
-  projectRootPath: string;
   iconWorkingDir: string;
-  creationWorkingDir: string;
   workspaceKeys: string[];
   canCreateWorktree: boolean;
 }
@@ -41,9 +38,7 @@ export function buildHostProjectList(input: {
     projectKey: project.projectKey,
     projectName: project.projectName,
     projectKind: project.projectKind,
-    projectRootPath: project.projectRootPath,
     iconWorkingDir: project.iconWorkingDir,
-    creationWorkingDir: project.creationWorkingDir,
     workspaceKeys: project.workspaceKeys,
     canCreateWorktree: canCreateWorktreeForProjectKind(project.projectKind),
   }));
@@ -60,9 +55,7 @@ export function hostProjectFromRoute(route: HostProjectRouteContext): HostProjec
     projectKey,
     projectName: trimOptional(route.displayName) ?? projectKey,
     projectKind: "git",
-    projectRootPath: iconWorkingDir,
     iconWorkingDir,
-    creationWorkingDir: iconWorkingDir,
     workspaceKeys: [],
     canCreateWorktree: true,
   };
@@ -80,18 +73,12 @@ export function hostProjectFromWorkspace(input: {
   if (!projectKey || !iconWorkingDir) {
     return null;
   }
-  const workspaceCreationDirectory =
-    (resolveWorkspaceDescriptorExecutionDirectory(input.workspace) ??
-      input.workspace.workspaceDirectory.trim()) ||
-    iconWorkingDir;
   return {
     serverId: input.serverId,
     projectKey,
     projectName: input.workspace.projectDisplayName || projectKey,
     projectKind: input.workspace.projectKind,
-    projectRootPath: input.workspace.projectRootPath,
     iconWorkingDir,
-    creationWorkingDir: workspaceCreationDirectory,
     workspaceKeys: [input.workspace.id],
     canCreateWorktree: canCreateWorktreeForProjectKind(input.workspace.projectKind),
   };

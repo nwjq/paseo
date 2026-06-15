@@ -196,6 +196,7 @@ export interface AgentManagerOptions {
   durableTimelineStore?: AgentTimelineStore;
   terminalManager?: TerminalManager | null;
   mcpBaseUrl?: string;
+  mcpAuthToken?: string;
   appendSystemPrompt?: string;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
@@ -482,6 +483,7 @@ export class AgentManager {
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
+  private readonly mcpAuthToken: string | null;
   private appendSystemPrompt: string;
   private onAgentAttention?: AgentAttentionCallback;
   private onAgentArchived?: AgentArchivedCallback;
@@ -496,6 +498,7 @@ export class AgentManager {
     this.onAgentAttention = options?.onAgentAttention;
     this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
     this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
+    this.mcpAuthToken = options?.mcpAuthToken ?? null;
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     this.rescueTimeouts = {
@@ -552,6 +555,16 @@ export class AgentManager {
 
   setMcpBaseUrl(url: string | null): void {
     this.mcpBaseUrl = url;
+  }
+
+  /**
+   * Capability token the daemon's own MCP clients must present to the Agent MCP
+   * endpoint when a daemon password is configured. Read by the per-client
+   * session to authenticate its own MCP connection. Stays in the daemon — never
+   * sent to remote clients.
+   */
+  getMcpAuthToken(): string | null {
+    return this.mcpAuthToken;
   }
 
   setAppendSystemPrompt(prompt: string | null | undefined): void {
@@ -836,7 +849,6 @@ export class AgentManager {
     agentId?: string,
     options?: {
       labels?: Record<string, string>;
-      workspaceId?: string;
       initialPrompt?: string;
       env?: Record<string, string>;
       persistSession?: boolean;
@@ -854,7 +866,6 @@ export class AgentManager {
     const session = await client.createSession(launchConfig, launchContext, createOptions);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       labels: options?.labels,
-      workspaceId: options?.workspaceId,
       initialTitle: options?.initialTitle,
     });
   }
@@ -2308,7 +2319,6 @@ export class AgentManager {
     config: AgentSessionConfig,
     agentId: string,
     options?: {
-      workspaceId?: string;
       createdAt?: Date;
       updatedAt?: Date;
       lastUserMessageAt?: Date | null;
@@ -2356,7 +2366,6 @@ export class AgentManager {
     this.previousStatuses.set(resolvedAgentId, managed.lifecycle);
     await this.refreshRuntimeInfo(managed, { emit: !options?.publishWhenReady });
     await this.persistSnapshot(managed, {
-      workspaceId: options?.workspaceId,
       title: initialPersistedTitle,
     });
     if (!options?.publishWhenReady) {
@@ -2365,7 +2374,7 @@ export class AgentManager {
 
     await this.refreshSessionState(managed, { emit: !options?.publishWhenReady });
     managed.lifecycle = "idle";
-    await this.persistSnapshot(managed, { workspaceId: options?.workspaceId });
+    await this.persistSnapshot(managed);
     this.emitState(managed, { persist: false });
     this.subscribeToSession(managed);
     return { ...managed };
@@ -2626,17 +2635,13 @@ export class AgentManager {
 
   private async persistSnapshot(
     agent: ManagedAgent,
-    options?: { workspaceId?: string; title?: string | null; internal?: boolean },
+    options?: { title?: string | null; internal?: boolean },
   ): Promise<void> {
     if (!this.registry) {
       return;
     }
     // Don't persist internal agents - they're ephemeral system tasks
     if (agent.internal) {
-      return;
-    }
-    if (options?.workspaceId !== undefined) {
-      await this.registry.applySnapshot(agent, options.workspaceId, options);
       return;
     }
     await this.registry.applySnapshot(agent, options);
@@ -3567,6 +3572,7 @@ export class AgentManager {
         config: storedConfig,
         agentId,
         mcpBaseUrl: this.mcpBaseUrl,
+        mcpAuthToken: this.mcpAuthToken,
       }),
     );
     return { storedConfig, launchConfig };

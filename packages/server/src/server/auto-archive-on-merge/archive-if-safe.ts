@@ -9,7 +9,6 @@ import type {
   WorkspaceGitRuntimeSnapshot,
   WorkspaceGitServiceImpl,
 } from "../workspace-git-service.js";
-import type { WorkspaceRegistry } from "../workspace-registry.js";
 import type { GitHubService } from "../../services/github-service.js";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 import { isPaseoOwnedWorktreeCwd } from "../../utils/worktree.js";
@@ -20,10 +19,10 @@ export interface AutoArchiveArchiveOptions {
   daemonConfigStore: DaemonConfigStore;
   workspaceGitService: WorkspaceGitServiceImpl;
   github: GitHubService;
-  workspaceRegistry: Pick<WorkspaceRegistry, "list">;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   terminalManager: TerminalManager;
+  resolveWorkspaceIdForCwd: (cwd: string) => Promise<string | null>;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
@@ -102,9 +101,9 @@ export async function archiveIfSafe(input: {
           worktreesRoot: options.worktreesRoot,
           github: options.github,
           workspaceGitService: options.workspaceGitService,
-          workspaceRegistry: options.workspaceRegistry,
           agentManager: options.agentManager,
           agentStorage: options.agentStorage,
+          resolveWorkspaceIdForCwd: options.resolveWorkspaceIdForCwd,
           archiveWorkspaceRecord: options.archiveWorkspaceRecord,
           emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,
           markWorkspaceArchiving: options.markWorkspaceArchiving,

@@ -120,12 +120,7 @@ import type { PrHint } from "@/git/use-pr-status-query";
 import { buildSidebarProjectRowModel } from "@/utils/sidebar-project-row-model";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { openExternalUrl } from "@/utils/open-external-url";
-import {
-  requireWorkspaceDescriptorExecutionDirectory,
-  requireWorkspaceExecutionDirectory,
-  resolveWorkspaceDescriptorExecutionDirectory,
-  resolveWorkspaceExecutionDirectory,
-} from "@/utils/workspace-execution";
+import { requireWorkspaceDirectory, resolveWorkspaceDirectory } from "@/utils/workspace-directory";
 import {
   confirmRiskyWorktreeArchive,
   type WorktreeArchiveWarningLabels,
@@ -134,10 +129,6 @@ import {
   archiveWorkspaceOptimistically,
   archiveWorkspacesOptimistically,
 } from "@/workspace/workspace-archive";
-import {
-  resolveProjectCreationDirectory,
-  resolveWorkspaceLocationLabel,
-} from "@/utils/sidebar-workspace-directory";
 import {
   isWeb as platformIsWeb,
   isNative as platformIsNative,
@@ -1269,45 +1260,18 @@ function ProjectHeaderRow({
 }: ProjectHeaderRowProps) {
   const [isHovered, setIsHovered] = useState(false);
   const isMobileBreakpoint = useIsCompactFormFactor();
-  const workspaceExecutionDirectory = useMemo(
-    () => resolveWorkspaceDescriptorExecutionDirectory(workspace),
-    [workspace],
-  );
-  const projectCreationDirectory = useMemo(
-    () =>
-      resolveProjectCreationDirectory({
-        projectIconWorkingDir: project.creationWorkingDir,
-        workspaceDirectory: workspaceExecutionDirectory,
-      }),
-    [project.creationWorkingDir, workspaceExecutionDirectory],
-  );
-  const projectWorkspaceLocationLabel = useMemo(
-    () =>
-      workspace
-        ? resolveWorkspaceLocationLabel({
-            projectKind: workspace.projectKind,
-            projectRootPath: workspace.projectRootPath,
-            workspaceDirectory: workspaceExecutionDirectory,
-          })
-        : null,
-    [workspace, workspaceExecutionDirectory],
-  );
-  const projectWorkspaceLocationStyle = useMemo(
-    () => [styles.projectWorkspaceHint, isHovered && styles.projectWorkspaceHintHovered],
-    [isHovered],
-  );
   const handleBeginWorkspaceSetup = useCallback(() => {
-    if (!serverId || !projectCreationDirectory) {
+    if (!serverId) {
       return;
     }
     onWorkspacePress?.();
     router.navigate(
-      buildHostNewWorkspaceRoute(serverId, projectCreationDirectory, {
+      buildHostNewWorkspaceRoute(serverId, project.iconWorkingDir, {
         displayName,
         projectId: project.projectKey,
       }) as Href,
     );
-  }, [displayName, onWorkspacePress, project.projectKey, projectCreationDirectory, serverId]);
+  }, [displayName, onWorkspacePress, project.iconWorkingDir, project.projectKey, serverId]);
   const interaction = useLongPressDragInteraction({
     drag,
     menuController,
@@ -1358,11 +1322,6 @@ function ProjectHeaderRow({
           <Text style={styles.projectTitle} numberOfLines={1}>
             {displayName}
           </Text>
-          {projectWorkspaceLocationLabel ? (
-            <Text style={projectWorkspaceLocationStyle} numberOfLines={1}>
-              {projectWorkspaceLocationLabel}
-            </Text>
-          ) : null}
         </View>
       </View>
       <ProjectRowTrailingActions
@@ -1454,7 +1413,6 @@ function WorkspaceRowInner({
   archiveShortcutKeys,
 }: WorkspaceRowInnerProps) {
   const _isCompact = useIsCompactFormFactor();
-  const workspaceDirectory = resolveWorkspaceDescriptorExecutionDirectory(workspace);
   const isTouchPlatform = platformIsNative;
   const interaction = useLongPressDragInteraction({
     drag,
@@ -1476,15 +1434,7 @@ function WorkspaceRowInner({
   }, [interaction.didLongPressRef, onPress]);
 
   const accessibilityState = useMemo(() => ({ selected }), [selected]);
-  const workspaceLocationHint = useMemo(
-    () =>
-      resolveWorkspaceLocationLabel({
-        projectKind: workspace.projectKind,
-        projectRootPath: workspace.projectRootPath,
-        workspaceDirectory,
-      }),
-    [workspace.projectKind, workspace.projectRootPath, workspaceDirectory],
-  );
+
   return (
     <SidebarWorkspaceRowFrame workspace={workspace} isDragging={isDragging}>
       {({ isHovered, hoverHandlers }) => {
@@ -1530,7 +1480,6 @@ function WorkspaceRowInner({
                 isCreating={isCreating}
                 shortcutNumber={shortcutNumber}
                 showShortcutBadge={showShortcutBadge}
-                subtitle={workspaceLocationHint}
               >
                 <WorkspaceRowRightGroup
                   workspace={workspace}
@@ -1586,14 +1535,14 @@ function WorkspaceRowWithMenu({
   const queryClient = useQueryClient();
   const [isArchivingWorkspace, setIsArchivingWorkspace] = useState(false);
   const [isRenameOpen, setIsRenameOpen] = useState(false);
-  const workspaceArchiveDirectory = resolveWorkspaceExecutionDirectory({
+  const workspaceDirectory = resolveWorkspaceDirectory({
     workspaceDirectory: workspace.workspaceDirectory,
   });
   const archiveStatus = useCheckoutGitActionsStore((state) =>
-    workspaceArchiveDirectory
+    workspaceDirectory
       ? state.getStatus({
           serverId: workspace.serverId,
-          cwd: workspaceArchiveDirectory,
+          cwd: workspaceDirectory,
           actionId: "archive-worktree",
         })
       : "idle",
@@ -1628,7 +1577,7 @@ function WorkspaceRowWithMenu({
     }
     let archiveDirectory: string;
     try {
-      archiveDirectory = requireWorkspaceExecutionDirectory({
+      archiveDirectory = requireWorkspaceDirectory({
         workspaceId: workspace.workspaceId,
         workspaceDirectory: workspace.workspaceDirectory,
       });
@@ -1708,7 +1657,10 @@ function WorkspaceRowWithMenu({
   const handleCopyPath = useCallback(() => {
     let copyTargetDirectory: string;
     try {
-      copyTargetDirectory = requireWorkspaceDescriptorExecutionDirectory(workspace);
+      copyTargetDirectory = requireWorkspaceDirectory({
+        workspaceId: workspace.workspaceId,
+        workspaceDirectory: workspace.workspaceDirectory,
+      });
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -1719,7 +1671,7 @@ function WorkspaceRowWithMenu({
     }
     void Clipboard.setStringAsync(copyTargetDirectory);
     toast.copied(t("sidebar.workspace.toasts.pathCopied"));
-  }, [t, toast, workspace]);
+  }, [t, toast, workspace.workspaceDirectory, workspace.workspaceId]);
 
   const handleCopyBranchName = useCallback(() => {
     void Clipboard.setStringAsync(workspace.name);
@@ -1732,7 +1684,10 @@ function WorkspaceRowWithMenu({
       if (!client) {
         throw new Error(t("sidebar.workspace.toasts.hostDisconnected"));
       }
-      const targetCwd = requireWorkspaceDescriptorExecutionDirectory(workspace);
+      const targetCwd = requireWorkspaceDirectory({
+        workspaceId: workspace.workspaceId,
+        workspaceDirectory: workspace.workspaceDirectory,
+      });
       const payload = await client.renameBranch({ cwd: targetCwd, branch });
       if (!payload.success || payload.error) {
         throw new Error(payload.error?.message ?? t("sidebar.workspace.rename.invalidBranchName"));
@@ -2941,9 +2896,9 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
   },
   projectTitleGroup: {
-    flexDirection: "column",
-    alignItems: "flex-start",
-    justifyContent: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
     flex: 1,
     minWidth: 0,
   },
@@ -2976,16 +2931,6 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: "400",
     minWidth: 0,
     flexShrink: 1,
-  },
-  projectWorkspaceHint: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    lineHeight: 16,
-    minWidth: 0,
-    opacity: 0.92,
-  },
-  projectWorkspaceHintHovered: {
-    color: theme.colors.foreground,
   },
   projectActionButton: {
     flexDirection: "row",
@@ -3165,15 +3110,6 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
     paddingLeft: WORKSPACE_STATUS_DOT_WIDTH + theme.spacing[2],
-  },
-  workspaceLocationHint: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    lineHeight: 16,
-    paddingLeft: WORKSPACE_STATUS_DOT_WIDTH + theme.spacing[2],
-  },
-  workspaceLocationHintHovered: {
-    color: theme.colors.foreground,
   },
   workspaceCreatingText: {
     color: theme.colors.foregroundMuted,

@@ -50,6 +50,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -59,7 +60,7 @@ import {
   FloatingPanelPortalHostNameProvider,
 } from "@/components/ui/floating-panel-portal";
 import { ExplorerSidebar } from "@/components/explorer-sidebar";
-import { SplitContainer } from "@/components/split-container";
+import { MountedTabActiveContext, SplitContainer } from "@/components/split-container";
 import { SourceControlPanelIcon } from "@/components/icons/source-control-panel-icon";
 import { WorkspaceGitActions } from "@/git/workspace-actions";
 import { WorkspaceOpenInEditorButton } from "@/screens/workspace/workspace-open-in-editor-button";
@@ -101,6 +102,7 @@ import { useWorkspace } from "@/stores/session-store-hooks";
 import { useWorkspaceTerminalSessionRetention } from "@/terminal/hooks/use-workspace-terminal-session-retention";
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { checkoutStatusQueryKey } from "@/git/query-keys";
+import { fetchCheckoutStatus } from "@/git/checkout-status-cache";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
@@ -108,11 +110,7 @@ import { createWorkspaceBrowser, useBrowserStore } from "@/stores/browser-store"
 import { getDesktopHost } from "@/desktop/host";
 import { buildProviderCommand } from "@/utils/provider-command-templates";
 import { generateDraftId } from "@/stores/draft-keys";
-import {
-  getWorkspaceExecutionAuthority,
-  resolveWorkspaceRouteId,
-  type WorkspaceExecutionAuthorityResult,
-} from "@/utils/workspace-execution";
+import { resolveWorkspaceRouteId } from "@/utils/workspace-identity";
 import {
   WorkspaceTabPresentationResolver,
   WorkspaceTabIcon,
@@ -168,13 +166,25 @@ import {
 } from "@/screens/workspace/workspace-bulk-close";
 import { resolveCloseAgentTabPolicy } from "@/subagents";
 import { findAdjacentPane } from "@/utils/split-navigation";
-import { isAbsolutePath } from "@/utils/path";
 import { useIsCompactFormFactor, supportsDesktopPaneSplits } from "@/constants/layout";
 import { getIsElectron, isNative, isWeb } from "@/constants/platform";
 import { useContainerWidthBelow } from "@/hooks/use-container-width";
-import { buildHostRootRoute, buildSettingsHostRoute } from "@/utils/host-routes";
+import {
+  buildHostRootRoute,
+  buildSettingsHostRoute,
+  buildSettingsHostSectionRoute,
+} from "@/utils/host-routes";
 import { canCreateWorkspaceTerminal } from "@/screens/workspace/terminals/state";
-import { useWorkspaceTerminals } from "@/screens/workspace/terminals/use-workspace-terminals";
+import {
+  useWorkspaceTerminals,
+  type TerminalProfileInput,
+} from "@/screens/workspace/terminals/use-workspace-terminals";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import {
+  getTerminalProfileIcon,
+  resolveTerminalProfiles,
+} from "@getpaseo/protocol/terminal-profiles";
+import { getProviderIcon } from "@/components/provider-icons";
 import {
   createWorkspaceFileTabTarget,
   normalizeWorkspaceFileLocation,
@@ -240,6 +250,19 @@ const ThemedImport = withUnistyles(ImportIcon);
 const ThemedSettings = withUnistyles(Settings);
 const ThemedPanelRight = withUnistyles(PanelRight);
 const ThemedSourceControlPanelIcon = withUnistyles(SourceControlPanelIcon);
+
+interface DynamicProviderIconProps {
+  iconKey: string;
+  size: number;
+  color?: string;
+}
+
+function DynamicProviderIcon({ iconKey, size, color = "" }: DynamicProviderIconProps) {
+  const Icon = getProviderIcon(iconKey);
+  return <Icon size={size} color={color} />;
+}
+
+const ThemedDynamicProviderIcon = withUnistyles(DynamicProviderIcon);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -365,6 +388,7 @@ interface MobileWorkspaceTabSwitcherProps {
   onSelectSwitcherTab: (key: string) => void;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
+  onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
@@ -552,6 +576,7 @@ function MobileWorkspaceTabOption({
   onPress,
   onCopyResumeCommand,
   onCopyAgentId,
+  onCopyFilePath,
   onReloadAgent,
   onRenameTab,
   onCloseTab,
@@ -569,6 +594,7 @@ function MobileWorkspaceTabOption({
   onPress: () => void;
   onCopyResumeCommand: (agentId: string) => Promise<void> | void;
   onCopyAgentId: (agentId: string) => Promise<void> | void;
+  onCopyFilePath: (path: string) => Promise<void> | void;
   onReloadAgent: (agentId: string) => Promise<void> | void;
   onRenameTab: (tab: WorkspaceTabDescriptor) => void;
   onCloseTab: (tabId: string) => Promise<void> | void;
@@ -581,6 +607,7 @@ function MobileWorkspaceTabOption({
     () => ({
       copyResumeCommand: t("workspace.tabs.menu.copyResumeCommand"),
       copyAgentId: t("workspace.tabs.menu.copyAgentId"),
+      copyFilePath: t("workspace.tabs.menu.copyFilePath"),
       rename: t("workspace.tabs.menu.rename"),
       closeAbove: t("workspace.tabs.menu.closeAbove"),
       closeBelow: t("workspace.tabs.menu.closeBelow"),
@@ -602,6 +629,7 @@ function MobileWorkspaceTabOption({
     menuTestIDBase,
     onCopyResumeCommand,
     onCopyAgentId,
+    onCopyFilePath,
     onReloadAgent,
     onRenameTab,
     onCloseTab,
@@ -668,6 +696,7 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
   onSelectSwitcherTab,
   onCopyResumeCommand,
   onCopyAgentId,
+  onCopyFilePath,
   onReloadAgent,
   onRenameTab,
   onCloseTab,
@@ -723,6 +752,7 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
           onPress={onPress}
           onCopyResumeCommand={onCopyResumeCommand}
           onCopyAgentId={onCopyAgentId}
+          onCopyFilePath={onCopyFilePath}
           onReloadAgent={onReloadAgent}
           onRenameTab={onRenameTab}
           onCloseTab={onCloseTab}
@@ -740,6 +770,7 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
       normalizedWorkspaceId,
       onCopyResumeCommand,
       onCopyAgentId,
+      onCopyFilePath,
       onReloadAgent,
       onRenameTab,
       onCloseTab,
@@ -820,13 +851,15 @@ const MobileMountedTabSlot = memo(function MobileMountedTabSlot({
 
   return (
     <RenderProfile id={`MobileMountedTabSlot:${tabDescriptor.kind}:${tabDescriptor.tabId}`}>
-      <View style={slotStyle} pointerEvents={isVisible ? "auto" : "none"}>
-        <WorkspacePaneContent
-          content={content}
-          isWorkspaceFocused={isWorkspaceFocused}
-          isPaneFocused={isPaneFocused}
-        />
-      </View>
+      <MountedTabActiveContext value={isVisible}>
+        <View style={slotStyle} pointerEvents={isVisible ? "auto" : "none"}>
+          <WorkspacePaneContent
+            content={content}
+            isWorkspaceFocused={isWorkspaceFocused}
+            isPaneFocused={isPaneFocused}
+          />
+        </View>
+      </MountedTabActiveContext>
     </RenderProfile>
   );
 });
@@ -927,13 +960,14 @@ function useCloseTabs(): UseCloseTabsResult {
 }
 
 interface WorkspaceHeaderMenuProps {
-  normalizedWorkspaceId: string;
+  normalizedServerId: string;
   currentBranchName: string | null;
   showWorkspaceSetup: boolean;
   showCreateBrowserTab: boolean;
   isMobile: boolean;
   createTerminalDisabled: boolean;
   importAgentDisabled: boolean;
+  copyPathDisabled: boolean;
   menuNewAgentIcon: ReactElement;
   menuNewTerminalIcon: ReactElement;
   menuNewBrowserIcon: ReactElement;
@@ -942,11 +976,54 @@ interface WorkspaceHeaderMenuProps {
   menuSettingsIcon: ReactElement;
   onCreateDraftTab: () => void;
   onCreateTerminal: () => void;
+  onCreateTerminalWithProfile: (profile: TerminalProfileInput) => void;
   onCreateBrowser: () => void;
   onOpenImportSheet: () => void;
   onCopyWorkspacePath: () => void;
   onCopyBranchName: () => void;
   onOpenSetupTab: () => void;
+}
+interface HeaderMenuProfileItemProps {
+  profile: { id: string; name: string; command: string; args?: string[]; icon?: string };
+  disabled: boolean;
+  onCreateTerminalWithProfile: (profile: TerminalProfileInput) => void;
+}
+
+function HeaderMenuProfileItem({
+  profile,
+  disabled,
+  onCreateTerminalWithProfile,
+}: HeaderMenuProfileItemProps) {
+  const handleSelect = useCallback(() => {
+    onCreateTerminalWithProfile({
+      name: profile.name,
+      command: profile.command,
+      args: profile.args,
+    });
+  }, [onCreateTerminalWithProfile, profile]);
+
+  const icon = getTerminalProfileIcon(profile);
+
+  const leading = useMemo(() => {
+    if (!icon) {
+      return (
+        <View style={styles.headerMenuProfileIconWrapper}>
+          <ThemedSquareTerminal size={16} uniProps={mutedColorMapping} />
+        </View>
+      );
+    }
+    return (
+      <View style={styles.headerMenuProfileIconWrapper}>
+        <ThemedDynamicProviderIcon iconKey={icon} size={16} uniProps={mutedColorMapping} />
+      </View>
+    );
+  }, [icon]);
+
+  return (
+    <DropdownMenuItem leading={leading} disabled={disabled} onSelect={handleSelect}>
+      {profile.name}
+    </DropdownMenuItem>
+  );
 }
 
 function WorkspaceHeaderMenuTriggerIcon({
@@ -964,13 +1041,14 @@ function WorkspaceHeaderMenuTriggerIcon({
 }
 
 function WorkspaceHeaderMenu({
-  normalizedWorkspaceId,
+  normalizedServerId,
   currentBranchName,
   showWorkspaceSetup,
   showCreateBrowserTab,
   isMobile,
   createTerminalDisabled,
   importAgentDisabled,
+  copyPathDisabled,
   menuNewAgentIcon,
   menuNewTerminalIcon,
   menuNewBrowserIcon,
@@ -979,6 +1057,7 @@ function WorkspaceHeaderMenu({
   menuSettingsIcon,
   onCreateDraftTab,
   onCreateTerminal,
+  onCreateTerminalWithProfile,
   onCreateBrowser,
   onOpenImportSheet,
   onCopyWorkspacePath,
@@ -986,6 +1065,17 @@ function WorkspaceHeaderMenu({
   onOpenSetupTab,
 }: WorkspaceHeaderMenuProps) {
   const { t } = useTranslation();
+  const router = useRouter();
+  const { config } = useDaemonConfig(normalizedServerId);
+  const profiles = useMemo(
+    () => resolveTerminalProfiles(config?.terminalProfiles),
+    [config?.terminalProfiles],
+  );
+
+  const handleEditProfiles = useCallback(() => {
+    router.push(buildSettingsHostSectionRoute(normalizedServerId, "terminals") as Href);
+  }, [normalizedServerId, router]);
+
   const renderTriggerIcon = useCallback(
     ({ hovered, open }: { hovered: boolean; open: boolean }) => (
       <WorkspaceHeaderMenuTriggerIcon hovered={hovered} open={open} isMobile={isMobile} />
@@ -1011,14 +1101,6 @@ function WorkspaceHeaderMenu({
         >
           {t("workspace.header.actions.newAgent")}
         </DropdownMenuItem>
-        <DropdownMenuItem
-          testID="workspace-header-new-terminal"
-          leading={menuNewTerminalIcon}
-          disabled={createTerminalDisabled}
-          onSelect={onCreateTerminal}
-        >
-          {t("workspace.header.actions.newTerminal")}
-        </DropdownMenuItem>
         {showCreateBrowserTab ? (
           <DropdownMenuItem
             testID="workspace-header-new-browser"
@@ -1039,7 +1121,7 @@ function WorkspaceHeaderMenu({
         <DropdownMenuItem
           testID="workspace-header-copy-path"
           leading={menuCopyIcon}
-          disabled={!isAbsolutePath(normalizedWorkspaceId)}
+          disabled={copyPathDisabled}
           onSelect={onCopyWorkspacePath}
         >
           {t("workspace.header.actions.copyPath")}
@@ -1065,6 +1147,31 @@ function WorkspaceHeaderMenu({
             </DropdownMenuItem>
           </>
         ) : null}
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel>{t("workspace.tabs.actions.terminalProfilesMenu")}</DropdownMenuLabel>
+        <DropdownMenuItem
+          testID="workspace-header-new-terminal"
+          leading={menuNewTerminalIcon}
+          disabled={createTerminalDisabled}
+          onSelect={onCreateTerminal}
+        >
+          {t("workspace.header.actions.newTerminal")}
+        </DropdownMenuItem>
+        {profiles.map((profile) => (
+          <HeaderMenuProfileItem
+            key={profile.id}
+            profile={profile}
+            disabled={createTerminalDisabled}
+            onCreateTerminalWithProfile={onCreateTerminalWithProfile}
+          />
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          testID="workspace-header-edit-terminal-profiles"
+          onSelect={handleEditProfiles}
+        >
+          {t("workspace.tabs.actions.editTerminalProfiles")}
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -1086,6 +1193,7 @@ interface WorkspaceHeaderTitleBarProps {
   isMobile: boolean;
   createTerminalDisabled: boolean;
   importAgentDisabled: boolean;
+  copyPathDisabled: boolean;
   menuNewAgentIcon: ReactElement;
   menuNewTerminalIcon: ReactElement;
   menuNewBrowserIcon: ReactElement;
@@ -1094,6 +1202,7 @@ interface WorkspaceHeaderTitleBarProps {
   menuSettingsIcon: ReactElement;
   onCreateDraftTab: () => void;
   onCreateTerminal: () => void;
+  onCreateTerminalWithProfile: (profile: TerminalProfileInput) => void;
   onCreateBrowser: () => void;
   onOpenImportSheet: () => void;
   onCopyWorkspacePath: () => void;
@@ -1120,6 +1229,7 @@ function WorkspaceHeaderTitleBar({
   isMobile,
   createTerminalDisabled,
   importAgentDisabled,
+  copyPathDisabled,
   menuNewAgentIcon,
   menuNewTerminalIcon,
   menuNewBrowserIcon,
@@ -1128,6 +1238,7 @@ function WorkspaceHeaderTitleBar({
   menuSettingsIcon,
   onCreateDraftTab,
   onCreateTerminal,
+  onCreateTerminalWithProfile,
   onCreateBrowser,
   onOpenImportSheet,
   onCopyWorkspacePath,
@@ -1165,13 +1276,14 @@ function WorkspaceHeaderTitleBar({
       )}
       <View style={styles.compactHeaderMenuCluster}>
         <WorkspaceHeaderMenu
-          normalizedWorkspaceId={normalizedWorkspaceId}
+          normalizedServerId={normalizedServerId}
           currentBranchName={currentBranchName}
           showWorkspaceSetup={showWorkspaceSetup}
           showCreateBrowserTab={showCreateBrowserTab}
           isMobile={isMobile}
           createTerminalDisabled={createTerminalDisabled}
           importAgentDisabled={importAgentDisabled}
+          copyPathDisabled={copyPathDisabled}
           menuNewAgentIcon={menuNewAgentIcon}
           menuNewTerminalIcon={menuNewTerminalIcon}
           menuNewBrowserIcon={menuNewBrowserIcon}
@@ -1180,6 +1292,7 @@ function WorkspaceHeaderTitleBar({
           menuSettingsIcon={menuSettingsIcon}
           onCreateDraftTab={onCreateDraftTab}
           onCreateTerminal={onCreateTerminal}
+          onCreateTerminalWithProfile={onCreateTerminalWithProfile}
           onCreateBrowser={onCreateBrowser}
           onOpenImportSheet={onOpenImportSheet}
           onCopyWorkspacePath={onCopyWorkspacePath}
@@ -1215,7 +1328,7 @@ function parsePaneDirection(actionId: string): PaneDirection | null {
 }
 
 interface RenderWorkspaceContentInput {
-  isMissingWorkspaceExecutionAuthority: boolean;
+  isMissingWorkspaceDirectory: boolean;
   activeTabDescriptor: WorkspaceTabDescriptor | null;
   hasHydratedAgents: boolean;
   mountedFocusedPaneTabIds: string[];
@@ -1230,7 +1343,7 @@ interface RenderWorkspaceContentInput {
 
 function renderWorkspaceContent(input: RenderWorkspaceContentInput): React.ReactNode {
   const {
-    isMissingWorkspaceExecutionAuthority,
+    isMissingWorkspaceDirectory,
     activeTabDescriptor,
     hasHydratedAgents,
     mountedFocusedPaneTabIds,
@@ -1240,11 +1353,11 @@ function renderWorkspaceContent(input: RenderWorkspaceContentInput): React.React
     buildMobilePaneContentModel,
   } = input;
 
-  if (isMissingWorkspaceExecutionAuthority) {
+  if (isMissingWorkspaceDirectory) {
     return (
       <View style={styles.emptyState}>
         <Text style={styles.emptyStateText}>
-          Workspace execution directory is missing. Reload workspace data before opening tabs.
+          Workspace directory is missing. Reload workspace data before opening tabs.
         </Text>
       </View>
     );
@@ -1335,22 +1448,6 @@ function deriveWorkspaceHeaderFields(input: {
     shouldShowWorkspaceHeaderSubtitle: renderState.shouldShowSubtitle,
     isGitCheckout: renderState.isGitCheckout,
     currentBranchName: renderState.currentBranchName,
-  };
-}
-
-interface WorkspaceAuthorityState {
-  workspaceDirectory: string | null;
-  isMissingWorkspaceExecutionAuthority: boolean;
-}
-
-function resolveWorkspaceAuthorityState(
-  workspaceAuthority: WorkspaceExecutionAuthorityResult,
-  workspaceDescriptor: WorkspaceDescriptor | null | undefined,
-): WorkspaceAuthorityState {
-  const authority = workspaceAuthority.ok ? workspaceAuthority.authority : null;
-  return {
-    workspaceDirectory: authority?.workspaceDirectory ?? null,
-    isMissingWorkspaceExecutionAuthority: Boolean(workspaceDescriptor && !authority),
   };
 }
 
@@ -1526,6 +1623,7 @@ interface WorkspaceTerminalTabActions {
   handleScriptTerminalSelected: (terminalId: string) => void;
   handleWorkspacePathUnavailable: () => void;
   handleTerminalCreateQueued: () => void;
+  handleTerminalCreateFailed: (reason: string) => void;
 }
 
 function useWorkspaceTerminalTabActions({
@@ -1562,12 +1660,19 @@ function useWorkspaceTerminalTabActions({
   const handleTerminalCreateQueued = useCallback(() => {
     toast.show(labels.terminalQueued);
   }, [labels.terminalQueued, toast]);
+  const handleTerminalCreateFailed = useCallback(
+    (reason: string) => {
+      toast.error(reason);
+    },
+    [toast],
+  );
 
   return {
     handleTerminalCreated,
     handleScriptTerminalSelected,
     handleWorkspacePathUnavailable,
     handleTerminalCreateQueued,
+    handleTerminalCreateFailed,
   };
 }
 
@@ -1600,10 +1705,16 @@ function useWorkspaceCheckoutStatus(input: {
       if (!input.client || !input.workspaceDirectory) {
         throw new Error(t("workspace.terminal.hostDisconnected"));
       }
-      return await input.client.getCheckoutStatus(input.workspaceDirectory);
+      return await fetchCheckoutStatus({
+        client: input.client,
+        serverId: input.normalizedServerId,
+        cwd: input.workspaceDirectory,
+      });
     },
     staleTime: Infinity,
-    refetchOnMount: false,
+    // Refetch on mount only after explicit invalidation (e.g. reconnect) — see
+    // useCheckoutStatusQuery for the rationale.
+    refetchOnMount: true,
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
   });
@@ -1647,15 +1758,8 @@ function WorkspaceScreenContent({
 
   const client = useHostRuntimeClient(normalizedServerId);
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
-  const workspaceAuthority = useMemo(
-    () =>
-      getWorkspaceExecutionAuthority({
-        workspace: workspaceDescriptor,
-      }),
-    [workspaceDescriptor],
-  );
-  const { workspaceDirectory, isMissingWorkspaceExecutionAuthority } =
-    resolveWorkspaceAuthorityState(workspaceAuthority, workspaceDescriptor);
+  const workspaceDirectory = workspaceDescriptor?.workspaceDirectory || null;
+  const isMissingWorkspaceDirectory = Boolean(workspaceDescriptor) && !workspaceDirectory;
   const [isImportSheetVisible, setIsImportSheetVisible] = useState(false);
   const canOpenImportSheet = [client, isConnected, workspaceDirectory].every(Boolean);
   const openImportSheet = useCallback(() => {
@@ -1704,6 +1808,7 @@ function WorkspaceScreenContent({
     handleScriptTerminalSelected,
     handleWorkspacePathUnavailable,
     handleTerminalCreateQueued,
+    handleTerminalCreateFailed,
   } = useWorkspaceTerminalTabActions({
     persistenceKey,
     focusWorkspacePane,
@@ -1739,11 +1844,12 @@ function WorkspaceScreenContent({
     workspaceDirectory,
     workspaceScripts,
     hasHydratedWorkspaces,
-    isMissingWorkspaceExecutionAuthority,
+    isMissingWorkspaceDirectory,
     onTerminalCreated: handleTerminalCreated,
     onScriptTerminalSelected: handleScriptTerminalSelected,
     onWorkspacePathUnavailable: handleWorkspacePathUnavailable,
     onTerminalCreateQueued: handleTerminalCreateQueued,
+    onTerminalCreateFailed: handleTerminalCreateFailed,
   });
   const { archiveAgent } = useArchiveAgent();
 
@@ -1924,6 +2030,7 @@ function WorkspaceScreenContent({
     [uiTabs, workspaceLayout],
   );
   const setFocusedAgentId = useSessionStore((state) => state.setFocusedAgentId);
+  const setFocusedTerminalId = useSessionStore((state) => state.setFocusedTerminalId);
   const focusedPaneAgentId = useMemo(() => {
     const target = focusedPaneTabState.activeTab?.descriptor.target;
     if (target?.kind !== "agent") {
@@ -1931,13 +2038,28 @@ function WorkspaceScreenContent({
     }
     return target.agentId;
   }, [focusedPaneTabState.activeTab]);
+  const focusedPaneTerminalId = useMemo(() => {
+    const target = focusedPaneTabState.activeTab?.descriptor.target;
+    if (target?.kind !== "terminal") {
+      return null;
+    }
+    return target.terminalId;
+  }, [focusedPaneTabState.activeTab]);
 
   useEffect(() => {
     if (!isRouteFocused) {
       return;
     }
     setFocusedAgentId(normalizedServerId, focusedPaneAgentId);
-  }, [focusedPaneAgentId, isRouteFocused, normalizedServerId, setFocusedAgentId]);
+    setFocusedTerminalId(normalizedServerId, focusedPaneTerminalId);
+  }, [
+    focusedPaneAgentId,
+    focusedPaneTerminalId,
+    isRouteFocused,
+    normalizedServerId,
+    setFocusedAgentId,
+    setFocusedTerminalId,
+  ]);
 
   useEffect(() => {
     if (!isRouteFocused) {
@@ -1945,8 +2067,9 @@ function WorkspaceScreenContent({
     }
     return () => {
       setFocusedAgentId(normalizedServerId, null);
+      setFocusedTerminalId(normalizedServerId, null);
     };
-  }, [isRouteFocused, normalizedServerId, setFocusedAgentId]);
+  }, [isRouteFocused, normalizedServerId, setFocusedAgentId, setFocusedTerminalId]);
 
   const openWorkspaceDraftTab = useCallback(
     function openWorkspaceDraftTab(input?: { draftId?: string; focus?: boolean }) {
@@ -2416,6 +2539,13 @@ function WorkspaceScreenContent({
 
   const handleCreateTerminal = useStableEvent(createTerminal);
 
+  const handleCreateTerminalWithProfile = useCallback(
+    (profile: TerminalProfileInput) => {
+      createTerminal({ profile });
+    },
+    [createTerminal],
+  );
+
   const handleCreateBrowserTab = useCallback(
     (input?: { paneId?: string }) => {
       if (!persistenceKey || !getIsElectron()) {
@@ -2593,6 +2723,19 @@ function WorkspaceScreenContent({
       try {
         await Clipboard.setStringAsync(agentId);
         toast.copied(t("workspace.tabs.toasts.agentIdCopiedLabel"));
+      } catch {
+        toast.error(t("workspace.tabs.toasts.copyFailed"));
+      }
+    },
+    [toast, t],
+  );
+
+  const handleCopyFilePath = useCallback(
+    async (path: string) => {
+      if (!path) return;
+      try {
+        await Clipboard.setStringAsync(path);
+        toast.copied(t("workspace.tabs.toasts.filePathCopiedLabel"));
       } catch {
         toast.error(t("workspace.tabs.toasts.copyFailed"));
       }
@@ -3108,7 +3251,7 @@ function WorkspaceScreenContent({
     [buildPaneContentModel],
   );
   const content = renderWorkspaceContent({
-    isMissingWorkspaceExecutionAuthority,
+    isMissingWorkspaceDirectory,
     activeTabDescriptor,
     hasHydratedAgents,
     mountedFocusedPaneTabIds,
@@ -3259,11 +3402,13 @@ function WorkspaceScreenContent({
         ) : null}
         {!isMobile && isGitCheckout ? (
           <>
-            <WorkspaceGitActions
-              serverId={normalizedServerId}
-              cwd={normalizedWorkspaceId}
-              hideLabels={showCompactButtonLabels}
-            />
+            {workspaceDirectory ? (
+              <WorkspaceGitActions
+                serverId={normalizedServerId}
+                cwd={workspaceDirectory}
+                hideLabels={showCompactButtonLabels}
+              />
+            ) : null}
             <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
               <TooltipTrigger asChild>
                 <Pressable
@@ -3422,6 +3567,7 @@ function WorkspaceScreenContent({
         onCloseTab={handleCloseTabById}
         onCopyResumeCommand={handleCopyResumeCommand}
         onCopyAgentId={handleCopyAgentId}
+        onCopyFilePath={handleCopyFilePath}
         onReloadAgent={handleReloadAgent}
         onRenameTab={handleRenameTab}
         onCloseTabsToLeft={handleCloseTabsToLeftInPane}
@@ -3456,6 +3602,7 @@ function WorkspaceScreenContent({
     handleCloseTabById,
     handleCopyResumeCommand,
     handleCopyAgentId,
+    handleCopyFilePath,
     handleReloadAgent,
     handleRenameTab,
     handleCloseTabsToLeftInPane,
@@ -3500,6 +3647,7 @@ function WorkspaceScreenContent({
                 isMobile={isMobile}
                 createTerminalDisabled={createTerminalDisabled}
                 importAgentDisabled={!canOpenImportSheet}
+                copyPathDisabled={!workspaceDirectory}
                 menuNewAgentIcon={menuNewAgentIcon}
                 menuNewTerminalIcon={menuNewTerminalIcon}
                 menuNewBrowserIcon={MENU_NEW_BROWSER_ICON}
@@ -3508,6 +3656,7 @@ function WorkspaceScreenContent({
                 menuSettingsIcon={menuSettingsIcon}
                 onCreateDraftTab={handleCreateDraftTab}
                 onCreateTerminal={handleCreateTerminal}
+                onCreateTerminalWithProfile={handleCreateTerminalWithProfile}
                 onCreateBrowser={handleCreateBrowserTab}
                 onOpenImportSheet={openImportSheet}
                 onCopyWorkspacePath={handleCopyWorkspacePath}
@@ -3535,6 +3684,7 @@ function WorkspaceScreenContent({
           onSelectSwitcherTab={handleSelectSwitcherTab}
           onCopyResumeCommand={handleCopyResumeCommand}
           onCopyAgentId={handleCopyAgentId}
+          onCopyFilePath={handleCopyFilePath}
           onReloadAgent={handleReloadAgent}
           onRenameTab={handleRenameTab}
           onCloseTab={handleCloseTabById}
@@ -3556,6 +3706,7 @@ function WorkspaceScreenContent({
           onCloseTab={handleCloseTabById}
           onCopyResumeCommand={handleCopyResumeCommand}
           onCopyAgentId={handleCopyAgentId}
+          onCopyFilePath={handleCopyFilePath}
           onReloadAgent={handleReloadAgent}
           onRenameTab={handleRenameTab}
           onCloseTabsToLeft={handleCloseTabsToLeft}
@@ -3844,6 +3995,10 @@ const styles = StyleSheet.create((theme) => ({
   menuItemHint: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.xs,
+  },
+  headerMenuProfileIconWrapper: {
+    width: 16,
+    height: 16,
   },
   tabsContainer: {
     borderBottomWidth: 1,

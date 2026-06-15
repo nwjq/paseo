@@ -69,6 +69,7 @@ import {
 import { isNative } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
+import { applyCheckoutStatusUpdateFromEvent } from "@/git/checkout-status-cache";
 
 // Re-export types from session-store and draft-store for backward compatibility
 export type { DraftInput } from "@/stores/draft-store";
@@ -489,6 +490,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const focusedAgentId = useSessionStore(
     (state) => state.sessions[serverId]?.focusedAgentId ?? null,
   );
+  const focusedTerminalId = useSessionStore(
+    (state) => state.sessions[serverId]?.focusedTerminalId ?? null,
+  );
   const sessionAgents = useSessionStore((state) => state.sessions[serverId]?.agents);
 
   const previousAgentStatusRef = useRef<Map<string, AgentLifecycleStatus>>(new Map());
@@ -814,7 +818,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   );
 
   // Client activity tracking (heartbeat, push token registration)
-  useClientActivity({ client, focusedAgentId, onAppResumed: handleAppResumed });
+  useClientActivity({ client, focusedAgentId, focusedTerminalId, onAppResumed: handleAppResumed });
   usePushTokenRegistration({ client, serverId });
 
   const notifyAgentAttention = useCallback(
@@ -1300,6 +1304,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       setWorkspaces(serverId, (prev) => patchWorkspaceScripts(prev, message.payload));
     });
 
+    const unsubCheckoutStatusUpdate = client.on("checkout_status_update", (message) => {
+      if (message.type !== "checkout_status_update") return;
+      applyCheckoutStatusUpdateFromEvent({ queryClient, serverId, message });
+    });
+
     const unsubWorkspaceSetupProgress = client.on("workspace_setup_progress", (message) => {
       if (message.type !== "workspace_setup_progress") return;
       applyWorkspaceSetupProgress(message.payload);
@@ -1642,12 +1651,34 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       });
     });
 
+    const unsubTerminalAttention = client.on("terminal_attention_required", (message) => {
+      if (message.type !== "terminal_attention_required") {
+        return;
+      }
+      if (!message.payload.shouldNotify) {
+        return;
+      }
+      void sendOsNotification({
+        title: message.payload.title,
+        body: message.payload.body,
+        // serverId + workspaceId + terminalId route a tap to the terminal tab; cwd is
+        // carried as a fallback identifier when the daemon resolved no workspace.
+        data: {
+          serverId: message.payload.serverId ?? serverId,
+          terminalId: message.payload.terminalId,
+          cwd: message.payload.cwd,
+          ...(message.payload.workspaceId ? { workspaceId: message.payload.workspaceId } : {}),
+        },
+      });
+    });
+
     return () => {
       unsubAgentUpdate();
       unsubAgentStream();
       unsubAgentTimeline();
       unsubWorkspaceUpdate();
       unsubScriptStatusUpdate();
+      unsubCheckoutStatusUpdate();
       unsubWorkspaceSetupProgress();
       unsubWorkspaceSetupStatusResponse();
       unsubStatus();
@@ -1660,6 +1691,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       unsubVoiceInputState();
       unsubAgentDeleted();
       unsubAgentArchived();
+      unsubTerminalAttention();
       agentStreamReducerQueue.dispose({ flush: true });
     };
   }, [

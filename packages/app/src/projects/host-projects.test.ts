@@ -16,10 +16,7 @@ function structureProject(input: Partial<WorkspaceStructureProject>): WorkspaceS
     projectKey: input.projectKey ?? "project-a",
     projectName: input.projectName ?? "Project A",
     projectKind: input.projectKind ?? "git",
-    projectRootPath: input.projectRootPath ?? input.iconWorkingDir ?? "/repo/a",
     iconWorkingDir: input.iconWorkingDir ?? "/repo/a",
-    creationWorkingDir:
-      input.creationWorkingDir ?? input.projectRootPath ?? input.iconWorkingDir ?? "/repo/a",
     workspaceKeys: input.workspaceKeys ?? ["workspace-a"],
   };
 }
@@ -30,10 +27,7 @@ function hostProject(input: Partial<HostProjectListItem>): HostProjectListItem {
     projectKey: input.projectKey ?? "project-a",
     projectName: input.projectName ?? "Project A",
     projectKind: input.projectKind ?? "git",
-    projectRootPath: input.projectRootPath ?? input.iconWorkingDir ?? "/repo/a",
     iconWorkingDir: input.iconWorkingDir ?? "/repo/a",
-    creationWorkingDir:
-      input.creationWorkingDir ?? input.projectRootPath ?? input.iconWorkingDir ?? "/repo/a",
     workspaceKeys: input.workspaceKeys ?? ["workspace-a"],
     canCreateWorktree: input.canCreateWorktree ?? true,
   };
@@ -54,7 +48,6 @@ function workspace(input: Partial<WorkspaceDescriptor>): WorkspaceDescriptor {
     archivingAt: input.archivingAt ?? null,
     diffStat: input.diffStat ?? null,
     scripts: input.scripts ?? [],
-    project: input.project,
   };
 }
 
@@ -102,9 +95,7 @@ describe("host project list", () => {
         projectKey: "project-b",
         projectName: "Project B",
         projectKind: "directory",
-        projectRootPath: "/repo/b",
         iconWorkingDir: "/repo/b",
-        creationWorkingDir: "/repo/b",
         workspaceKeys: ["workspace-b"],
         canCreateWorktree: false,
       },
@@ -113,9 +104,7 @@ describe("host project list", () => {
         projectKey: "project-a",
         projectName: "Project A",
         projectKind: "git",
-        projectRootPath: "/repo/a",
         iconWorkingDir: "/repo/a",
-        creationWorkingDir: "/repo/a",
         workspaceKeys: ["workspace-a"],
         canCreateWorktree: true,
       },
@@ -188,9 +177,7 @@ describe("host project list", () => {
       projectKey: "project-a",
       projectName: "Project A",
       projectKind: "git",
-      projectRootPath: "/repo/a",
       iconWorkingDir: "/repo/a",
-      creationWorkingDir: "/repo/a",
       workspaceKeys: [],
       canCreateWorktree: true,
     });
@@ -203,9 +190,7 @@ describe("host project list", () => {
       projectKey: "project-a",
       projectName: "Project A",
       projectKind: "git",
-      projectRootPath: "/repo/a",
       iconWorkingDir: "/repo/a",
-      creationWorkingDir: "/repo/a",
       workspaceKeys: ["workspace-a"],
       canCreateWorktree: true,
     });
@@ -216,32 +201,5 @@ describe("host project list", () => {
         workspace: workspace({ projectKind: "directory" }),
       }),
     ).toMatchObject({ projectKind: "directory", canCreateWorktree: false });
-  });
-
-  it("uses the workspace directory for workspace-backed project creation before checkout metadata", () => {
-    expect(
-      hostProjectFromWorkspace({
-        serverId: "host-a",
-        workspace: workspace({
-          projectRootPath: "/repo/a",
-          workspaceDirectory: "/repo/a/packages/app",
-          project: {
-            projectKey: "project-a",
-            projectName: "Project A",
-            checkout: {
-              cwd: "/repo/a",
-              isGit: true,
-              currentBranch: "main",
-              remoteUrl: null,
-              worktreeRoot: "/repo/a",
-              isPaseoOwnedWorktree: false,
-              mainRepoRoot: null,
-            },
-          },
-        }),
-      }),
-    ).toMatchObject({
-      creationWorkingDir: "/repo/a/packages/app",
-    });
   });
 });

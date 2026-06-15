@@ -5,7 +5,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
-import * as executableUtils from "../../../../utils/executable.js";
+import * as executableUtils from "../../../../executable-resolution/executable-resolution.js";
 import {
   ClaudeAgentClient,
   convertClaudeHistoryEntry,
@@ -860,6 +860,98 @@ describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
   });
 });
 
+describe("ClaudeAgentClient.listImportableSessions", () => {
+  test("shows Claude slash command prompts without transcript tags", async () => {
+    const tmpConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-"));
+    const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = tmpConfigDir;
+
+    try {
+      const commandSessionId = "session-command-import";
+      const argsSessionId = "session-command-args-import";
+      const cwd = "/tmp/paseo-test-claude-import";
+      const sanitized = cwd.replace(/[\\/._:]/g, "-");
+      const projectDir = path.join(tmpConfigDir, "projects", sanitized);
+      await fs.mkdir(projectDir, { recursive: true });
+      const commandSessionFile = path.join(projectDir, `${commandSessionId}.jsonl`);
+      const argsSessionFile = path.join(projectDir, `${argsSessionId}.jsonl`);
+      await fs.writeFile(
+        commandSessionFile,
+        `${JSON.stringify({
+          parentUuid: null,
+          isSidechain: false,
+          type: "user",
+          message: {
+            role: "user",
+            content:
+              "<command-message>caveman:caveman</command-message>\n<command-name>/caveman:caveman</command-name>",
+          },
+          cwd,
+          sessionId: commandSessionId,
+        })}\n`,
+        "utf-8",
+      );
+      await fs.writeFile(
+        argsSessionFile,
+        `${JSON.stringify({
+          parentUuid: null,
+          isSidechain: false,
+          type: "user",
+          message: {
+            role: "user",
+            content:
+              "<command-message>diagnose</command-message>\n<command-name>/diagnose</command-name>\n<command-args>recently the PR data does not update</command-args>",
+          },
+          cwd,
+          sessionId: argsSessionId,
+        })}\n`,
+        "utf-8",
+      );
+      await fs.utimes(
+        commandSessionFile,
+        new Date("2026-06-12T10:00:00.000Z"),
+        new Date("2026-06-12T10:00:00.000Z"),
+      );
+      await fs.utimes(
+        argsSessionFile,
+        new Date("2026-06-12T11:00:00.000Z"),
+        new Date("2026-06-12T11:00:00.000Z"),
+      );
+
+      const client = new ClaudeAgentClient({
+        logger: createTestLogger(),
+        resolveBinary: async () => "/test/claude/bin",
+      });
+
+      await expect(client.listImportableSessions({ limit: 2 })).resolves.toEqual([
+        {
+          providerHandleId: argsSessionId,
+          cwd,
+          title: "/diagnose recently the PR data does not update",
+          firstPromptPreview: "/diagnose recently the PR data does not update",
+          lastPromptPreview: "/diagnose recently the PR data does not update",
+          lastActivityAt: new Date("2026-06-12T11:00:00.000Z"),
+        },
+        {
+          providerHandleId: commandSessionId,
+          cwd,
+          title: "/caveman:caveman",
+          firstPromptPreview: "/caveman:caveman",
+          lastPromptPreview: "/caveman:caveman",
+          lastActivityAt: new Date("2026-06-12T10:00:00.000Z"),
+        },
+      ]);
+    } finally {
+      if (previousConfigDir === undefined) {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      } else {
+        process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
+      }
+      await fs.rm(tmpConfigDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("ClaudeAgentSession context window usage", () => {
   const logger = createTestLogger();
 
@@ -997,6 +1089,88 @@ describe("ClaudeAgentSession context window usage", () => {
     await persistedSession.close();
 
     expect(persistedQueryFactory.mock.calls[0]?.[0].options.persistSession).toBe(true);
+  });
+
+  test("classifies Claude root-only commands separately from inline skills", async () => {
+    const queryFactory = vi.fn(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+      void prompt;
+      return {
+        next: async () => ({ done: true, value: undefined }),
+        interrupt: async () => undefined,
+        return: async () => undefined,
+        close: () => undefined,
+        setPermissionMode: async () => undefined,
+        setModel: async () => undefined,
+        supportedModels: async () => [],
+        supportedCommands: async () => [
+          {
+            name: "taste",
+            description: "Use when another skill needs the shared standard. (user)",
+            argumentHint: "",
+          },
+          {
+            name: "claude-api",
+            description: "Build, debug, and optimize Claude API apps with this skill.",
+            argumentHint: "",
+          },
+          {
+            name: "usage",
+            description: "Show the total cost and duration of the current session",
+            argumentHint: "",
+          },
+          {
+            name: "clear",
+            description: "Start a new session with empty context",
+            argumentHint: "",
+          },
+        ],
+        rewindFiles: async () => ({ canRewind: true }),
+        [Symbol.asyncIterator]() {
+          return this;
+        },
+      };
+    });
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+
+    const commands = await session.listCommands();
+    await session.close();
+
+    expect(commands).toEqual([
+      {
+        name: "claude-api",
+        description: "Build, debug, and optimize Claude API apps with this skill.",
+        argumentHint: "",
+        kind: "skill",
+      },
+      {
+        name: "clear",
+        description: "Start a new session with empty context",
+        argumentHint: "",
+        kind: "command",
+      },
+      {
+        name: "rewind",
+        description: "Rewind tracked files to a previous user message",
+        argumentHint: "[user_message_uuid]",
+      },
+      {
+        name: "taste",
+        description: "Use when another skill needs the shared standard. (user)",
+        argumentHint: "",
+        kind: "skill",
+      },
+      {
+        name: "usage",
+        description: "Show the total cost and duration of the current session",
+        argumentHint: "",
+        kind: "command",
+      },
+    ]);
   });
 
   test("deletes the persisted session jsonl on close when persistSession=false", async () => {

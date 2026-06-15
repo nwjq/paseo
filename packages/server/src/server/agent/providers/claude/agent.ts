@@ -302,6 +302,18 @@ const REWIND_COMMAND: AgentSlashCommand = {
   description: "Rewind tracked files to a previous user message",
   argumentHint: "[user_message_uuid]",
 };
+const CLAUDE_ROOT_ONLY_COMMANDS = new Set([
+  "clear",
+  "compact",
+  "context",
+  "debug",
+  "extra-usage",
+  "heapdump",
+  "init",
+  "loop",
+  "schedule",
+  "usage",
+]);
 const INTERRUPT_TOOL_USE_PLACEHOLDER = "[Request interrupted by user for tool use]";
 const INTERRUPT_PLACEHOLDER_PATTERN = /^\[Request interrupted by user(?:[^\]]*)\]$/;
 const NO_RESPONSE_REQUESTED_PLACEHOLDER = "No response requested.";
@@ -311,6 +323,13 @@ interface SlashCommandInvocation {
   commandName: string;
   args?: string;
   rawInput: string;
+}
+
+function classifyClaudeSlashCommand(commandName: string): AgentSlashCommand["kind"] {
+  // Claude exposes commands and skills as one flat SDK list, without structured source
+  // metadata. Keep obvious root-only/session controls out of inline autocomplete and
+  // treat the rest as skills; the worst failure mode is an inert inline suggestion.
+  return CLAUDE_ROOT_ONLY_COMMANDS.has(commandName) ? "command" : "skill";
 }
 
 type ClaudeAgentConfig = AgentSessionConfig & { provider: "claude" };
@@ -585,6 +604,9 @@ function isClaudeNoResponsePlaceholderText(value: unknown): boolean {
 
 const LOCAL_COMMAND_STDOUT_PATTERN =
   /^\s*<local-command-stdout>[\s\S]*<\/local-command-stdout>\s*$/;
+const CLAUDE_COMMAND_MESSAGE_PATTERN = /<command-message>([\s\S]*?)<\/command-message>/;
+const CLAUDE_COMMAND_ARGS_PATTERN = /<command-args>([\s\S]*?)<\/command-args>/;
+const CLAUDE_COMMAND_NAME_PATTERN = /<command-name>([\s\S]*?)<\/command-name>/;
 
 function isClaudeLocalCommandStdout(value: unknown): boolean {
   const normalized = normalizeClaudeTranscriptText(value);
@@ -640,7 +662,7 @@ export function extractUserMessageText(content: unknown): string | null {
     if (!normalized || isClaudeTranscriptNoiseText(normalized)) {
       return null;
     }
-    return normalized;
+    return normalizeClaudeUserPromptText(normalized);
   }
 
   if (!Array.isArray(content)) {
@@ -656,7 +678,10 @@ export function extractUserMessageText(content: unknown): string | null {
     if (text && text.trim()) {
       const trimmed = text.trim();
       if (!isClaudeTranscriptNoiseText(trimmed)) {
-        parts.push(trimmed);
+        const normalized = normalizeClaudeUserPromptText(trimmed);
+        if (normalized) {
+          parts.push(normalized);
+        }
       }
       continue;
     }
@@ -664,7 +689,10 @@ export function extractUserMessageText(content: unknown): string | null {
     if (input && input.trim()) {
       const trimmed = input.trim();
       if (!isClaudeTranscriptNoiseText(trimmed)) {
-        parts.push(trimmed);
+        const normalized = normalizeClaudeUserPromptText(trimmed);
+        if (normalized) {
+          parts.push(normalized);
+        }
       }
     }
   }
@@ -2137,7 +2165,7 @@ class ClaudeAgentSession implements AgentSession {
           name: cmd.name,
           description: cmd.description,
           argumentHint: cmd.argumentHint,
-          kind: "command",
+          kind: classifyClaudeSlashCommand(cmd.name),
         });
       }
     }
@@ -5063,6 +5091,38 @@ function normalizeImportablePromptPreview(text: string): string | null {
   return normalized.length > 160 ? normalized.slice(0, 160) : normalized;
 }
 
+function normalizeClaudeUserPromptText(text: string): string | null {
+  const normalized = text.trim();
+  if (!CLAUDE_COMMAND_MESSAGE_PATTERN.test(normalized)) {
+    return normalized || null;
+  }
+
+  const command = readClaudeCommandPromptName(normalized);
+  if (!command) {
+    return null;
+  }
+
+  const commandArgs = normalized.match(CLAUDE_COMMAND_ARGS_PATTERN)?.[1]?.trim();
+  if (commandArgs) {
+    return `${command} ${commandArgs}`;
+  }
+
+  return command;
+}
+
+function readClaudeCommandPromptName(text: string): string | null {
+  const commandName = text.match(CLAUDE_COMMAND_NAME_PATTERN)?.[1]?.trim();
+  if (commandName) {
+    return commandName.startsWith("/") ? commandName : `/${commandName}`;
+  }
+
+  const commandMessage = text.match(CLAUDE_COMMAND_MESSAGE_PATTERN)?.[1]?.trim();
+  if (!commandMessage) {
+    return null;
+  }
+  return commandMessage.startsWith("/") ? commandMessage : `/${commandMessage}`;
+}
+
 function extractClaudeUserText(messageRaw: unknown): string | null {
   const message = toObjectRecord(messageRaw);
   if (!message) {
@@ -5070,11 +5130,13 @@ function extractClaudeUserText(messageRaw: unknown): string | null {
   }
   if (typeof message.content === "string") {
     const normalized = message.content.trim();
-    return normalized && !isClaudeTranscriptNoiseText(normalized) ? normalized : null;
+    if (!normalized || isClaudeTranscriptNoiseText(normalized)) return null;
+    return normalizeClaudeUserPromptText(normalized);
   }
   if (typeof message.text === "string") {
     const normalized = message.text.trim();
-    return normalized && !isClaudeTranscriptNoiseText(normalized) ? normalized : null;
+    if (!normalized || isClaudeTranscriptNoiseText(normalized)) return null;
+    return normalizeClaudeUserPromptText(normalized);
   }
   if (isUnknownArray(message.content)) {
     for (const block of message.content) {
@@ -5082,7 +5144,7 @@ function extractClaudeUserText(messageRaw: unknown): string | null {
       if (blockRecord && typeof blockRecord.text === "string") {
         const normalized = blockRecord.text.trim();
         if (normalized && !isClaudeTranscriptNoiseText(normalized)) {
-          return normalized;
+          return normalizeClaudeUserPromptText(normalized);
         }
       }
     }

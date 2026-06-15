@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TerminalActivitySchema } from "./terminal-activity.js";
 import { CLIENT_CAPS } from "./client-capabilities.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "@getpaseo/protocol/agent-title-limits";
@@ -116,6 +117,18 @@ const MutableMetadataGenerationConfigSchema = z
   })
   .passthrough();
 
+export const TerminalProfileSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    command: z.string(),
+    args: z.array(z.string()).optional(),
+    icon: z.string().optional(),
+  })
+  .passthrough();
+
+export type TerminalProfile = z.infer<typeof TerminalProfileSchema>;
+
 export const MutableDaemonConfigSchema = z
   .object({
     mcp: z
@@ -126,7 +139,9 @@ export const MutableDaemonConfigSchema = z
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
     metadataGeneration: MutableMetadataGenerationConfigSchema.default({ providers: [] }),
     autoArchiveAfterMerge: z.boolean().default(false),
+    enableTerminalAgentHooks: z.boolean().default(false),
     appendSystemPrompt: z.string().default(""),
+    terminalProfiles: z.array(TerminalProfileSchema).optional(),
   })
   .passthrough();
 
@@ -138,7 +153,9 @@ export const MutableDaemonConfigPatchSchema = z
       .optional(),
     metadataGeneration: MutableMetadataGenerationConfigSchema.partial().optional(),
     autoArchiveAfterMerge: z.boolean().optional(),
+    enableTerminalAgentHooks: z.boolean().optional(),
     appendSystemPrompt: z.string().optional(),
+    terminalProfiles: z.array(TerminalProfileSchema).optional(),
   })
   .partial()
   .passthrough();
@@ -934,6 +951,7 @@ export const FetchWorkspacesRequestMessageSchema = z.object({
     .object({
       query: z.string().optional(),
       projectId: z.string().optional(),
+      // Unused: accepted so older clients still parse, but the server does not filter on it.
       idPrefix: z.string().optional(),
     })
     .optional(),
@@ -1441,6 +1459,18 @@ export const CheckoutGithubSetAutoMergeRequestSchema = z.object({
   requestId: z.string(),
 });
 
+const GitHubRepoSegmentSchema = z.string().regex(/^[A-Za-z0-9._-]+$/);
+
+export const CheckoutGithubGetCheckDetailsRequestSchema = z.object({
+  type: z.literal("checkout.github.get_check_details.request"),
+  cwd: z.string(),
+  repoOwner: GitHubRepoSegmentSchema,
+  repoName: GitHubRepoSegmentSchema,
+  checkRunId: z.number().int().positive(),
+  workflowRunId: z.number().int().positive().optional(),
+  requestId: z.string(),
+});
+
 export const CheckoutPrStatusRequestSchema = z.object({
   type: z.literal("checkout_pr_status_request"),
   cwd: z.string(),
@@ -1601,6 +1631,7 @@ export const LegacyOpenInEditorRequestSchema = z.object({
 
 export const OpenProjectRequestSchema = z.object({
   type: z.literal("open_project_request"),
+  // Path used only for workspace lookup/creation. Use the returned workspace.id for all subsequent references.
   cwd: z.string(),
   requestId: z.string(),
 });
@@ -1712,6 +1743,8 @@ export const ClientHeartbeatMessageSchema = z.object({
   type: z.literal("client_heartbeat"),
   deviceType: z.enum(["web", "mobile"]),
   focusedAgentId: z.string().nullable(),
+  // COMPAT(terminalFocusHeartbeat): added in v0.1.97, remove optional default after 2026-12-13 once old clients no longer send heartbeats without terminal focus.
+  focusedTerminalId: z.string().nullable().optional().default(null),
   lastActivityAt: z.string(),
   appVisible: z.boolean(),
   appVisibilityChangedAt: z.string().optional(),
@@ -1910,6 +1943,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutPrCreateRequestSchema,
   CheckoutPrMergeRequestSchema,
   CheckoutGithubSetAutoMergeRequestSchema,
+  CheckoutGithubGetCheckDetailsRequestSchema,
   CheckoutPrStatusRequestSchema,
   PullRequestTimelineRequestSchema,
   CheckoutSwitchBranchRequestSchema,
@@ -2137,6 +2171,8 @@ export const ServerInfoStatusPayloadSchema = z
       .object({
         providersSnapshot: z.boolean().optional(),
         checkoutGithubSetAutoMerge: z.boolean().optional(),
+        // COMPAT(githubCheckDetails): added in v0.1.92, remove gate after 2026-12-08.
+        githubCheckDetails: z.boolean().optional(),
         // COMPAT(daemonStatusRpc): added in v0.1.76, remove gate after 2026-11-18.
         daemonStatusRpc: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
@@ -2593,6 +2629,8 @@ export const OpenProjectResponseMessageSchema = z.object({
     requestId: z.string(),
     workspace: WorkspaceDescriptorPayloadSchema.nullable(),
     error: z.string().nullable(),
+    // Unknown codes from newer daemons degrade to null; clients fall back to `error`.
+    errorCode: z.enum(["directory_not_found"]).nullish().catch(null),
   }),
 });
 
@@ -3031,6 +3069,8 @@ export const CheckoutPrStatusSchema = z.object({
         url: z.string().nullable(),
         workflow: z.string().optional(),
         duration: z.string().optional(),
+        checkRunId: z.number().optional(),
+        workflowRunId: z.number().optional(),
       }),
     )
     .optional()
@@ -3176,6 +3216,58 @@ export const CheckoutGithubSetAutoMergeResponseSchema = z.object({
   }),
 });
 
+const CheckoutGithubCheckAnnotationSchema = z.object({
+  path: z.string().optional(),
+  startLine: z.number().optional(),
+  endLine: z.number().optional(),
+  annotationLevel: z.string().optional(),
+  message: z.string().optional(),
+  title: z.string().optional(),
+  rawDetails: z.string().optional(),
+});
+
+const CheckoutGithubCheckJobSchema = z.object({
+  jobId: z.number(),
+  name: z.string(),
+  status: z.string().nullable().optional(),
+  conclusion: z.string().nullable().optional(),
+  url: z.string().nullable().optional(),
+  logTail: z.string().optional(),
+  logTruncated: z.boolean().optional(),
+});
+
+export const CheckoutGithubCheckDetailsSchema = z.object({
+  checkRunId: z.number(),
+  workflowRunId: z.number().nullable().optional(),
+  name: z.string(),
+  status: z.string().nullable().optional(),
+  conclusion: z.string().nullable().optional(),
+  url: z.string().nullable().optional(),
+  detailsUrl: z.string().nullable().optional(),
+  output: z
+    .object({
+      title: z.string().nullable().optional(),
+      summary: z.string().nullable().optional(),
+      text: z.string().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
+  annotations: z.array(CheckoutGithubCheckAnnotationSchema).optional().default([]),
+  failedJobs: z.array(CheckoutGithubCheckJobSchema).optional().default([]),
+  truncated: z.boolean().optional().default(false),
+});
+
+export const CheckoutGithubGetCheckDetailsResponseSchema = z.object({
+  type: z.literal("checkout.github.get_check_details.response"),
+  payload: z.object({
+    cwd: z.string(),
+    success: z.boolean(),
+    details: CheckoutGithubCheckDetailsSchema.nullable().optional().default(null),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const CheckoutPrStatusResponseSchema = z.object({
   type: z.literal("checkout_pr_status_response"),
   payload: CheckoutPrStatusPayloadSchema,
@@ -3211,6 +3303,8 @@ const PullRequestTimelineReviewItemSchema = z.object({
   id: z.string().optional().default(""),
   kind: z.literal("review"),
   author: z.string().optional().default("unknown"),
+  authorUrl: z.string().nullable().optional(),
+  avatarUrl: z.string().nullable().optional(),
   body: z.string().optional().default(""),
   createdAt: z.number().optional().default(0),
   url: z.string().optional().default(""),
@@ -3224,9 +3318,25 @@ const PullRequestTimelineCommentItemSchema = z.object({
   id: z.string().optional().default(""),
   kind: z.literal("comment"),
   author: z.string().optional().default("unknown"),
+  authorUrl: z.string().nullable().optional(),
+  avatarUrl: z.string().nullable().optional(),
   body: z.string().optional().default(""),
   createdAt: z.number().optional().default(0),
   url: z.string().optional().default(""),
+  // GitHub review id this inline comment belongs to; lets clients nest review
+  // threads under their parent review. Absent on issue comments and on
+  // timelines from daemons that predate the field.
+  reviewId: z.string().optional(),
+  location: z
+    .object({
+      path: z.string(),
+      line: z.number().optional(),
+      startLine: z.number().optional(),
+      threadId: z.string().optional(),
+      isResolved: z.boolean().optional(),
+      isOutdated: z.boolean().optional(),
+    })
+    .optional(),
 });
 
 export const PullRequestTimelineItemSchema = z.preprocess(
@@ -3582,6 +3692,7 @@ const TerminalInfoSchema = z.object({
   name: z.string(),
   cwd: z.string(),
   title: z.string().optional(),
+  activity: TerminalActivitySchema.nullable().optional(),
 });
 
 export const TerminalCellSchema = z.object({
@@ -3702,6 +3813,20 @@ export const TerminalStreamExitSchema = z.object({
   }),
 });
 
+export const TerminalAttentionRequiredSchema = z.object({
+  type: z.literal("terminal_attention_required"),
+  payload: z.object({
+    serverId: z.string().optional(),
+    terminalId: z.string(),
+    cwd: z.string(),
+    workspaceId: z.string().optional(),
+    reason: z.enum(["finished", "needs_input"]),
+    title: z.string(),
+    body: z.string(),
+    shouldNotify: z.boolean(),
+  }),
+});
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
@@ -3772,6 +3897,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutPrCreateResponseSchema,
   CheckoutPrMergeResponseSchema,
   CheckoutGithubSetAutoMergeResponseSchema,
+  CheckoutGithubGetCheckDetailsResponseSchema,
   CheckoutPrStatusResponseSchema,
   PullRequestTimelineResponseSchema,
   CheckoutSwitchBranchResponseSchema,
@@ -3807,6 +3933,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   KillTerminalResponseSchema,
   CaptureTerminalResponseSchema,
   TerminalStreamExitSchema,
+  TerminalAttentionRequiredSchema,
   ChatCreateResponseSchema,
   ChatListResponseSchema,
   ChatInspectResponseSchema,
@@ -3962,6 +4089,7 @@ export type DictationStreamFinishMessage = z.infer<typeof DictationStreamFinishM
 export type DictationStreamCancelMessage = z.infer<typeof DictationStreamCancelMessageSchema>;
 export type CreateAgentRequestMessage = z.infer<typeof CreateAgentRequestMessageSchema>;
 export type AgentAttachment = z.infer<typeof AgentAttachmentSchema>;
+export type UploadedFileAttachment = z.infer<typeof UploadedFileAttachmentSchema>;
 export type FirstAgentContext = z.infer<typeof FirstAgentContextSchema>;
 export type ReviewAttachment = z.infer<typeof ReviewAttachmentSchema>;
 export type ListProviderModelsRequestMessage = z.infer<
@@ -4042,6 +4170,13 @@ export type CheckoutGithubSetAutoMergeRequest = z.infer<
 >;
 export type CheckoutGithubSetAutoMergeResponse = z.infer<
   typeof CheckoutGithubSetAutoMergeResponseSchema
+>;
+export type CheckoutGithubGetCheckDetailsRequest = z.infer<
+  typeof CheckoutGithubGetCheckDetailsRequestSchema
+>;
+export type CheckoutGithubCheckDetails = z.infer<typeof CheckoutGithubCheckDetailsSchema>;
+export type CheckoutGithubGetCheckDetailsResponse = z.infer<
+  typeof CheckoutGithubGetCheckDetailsResponseSchema
 >;
 export type PullRequestMergeable = z.infer<typeof CheckoutPrStatusSchema>["mergeable"];
 export type CheckoutPrStatusRequest = z.infer<typeof CheckoutPrStatusRequestSchema>;

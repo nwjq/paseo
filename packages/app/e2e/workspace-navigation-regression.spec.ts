@@ -9,7 +9,7 @@ import {
   openWorkspaceWithAgents,
 } from "./helpers/archive-tab";
 import { expectComposerVisible } from "./helpers/composer";
-import { daemonWsRoutePattern } from "./helpers/daemon-port";
+import { daemonWsRoutePattern, getE2EDaemonPort } from "./helpers/daemon-port";
 import { seedWorkspace } from "./helpers/seed-client";
 import {
   getVisibleWorkspaceAgentTabIds,
@@ -32,6 +32,7 @@ import {
 } from "./helpers/workspace-ui";
 import { clickSettingsBackToWorkspace } from "./helpers/settings";
 import { getServerId } from "./helpers/server-id";
+import { injectDesktopBridge } from "./helpers/desktop-updates";
 
 const LOADING_WORKSPACE_TEXT_PATTERN = /Loading workspace/i;
 
@@ -77,6 +78,43 @@ async function closeFirstVisibleDraftTab(page: Page): Promise<void> {
   });
   await expect(closeButton.first()).toBeVisible({ timeout: 30_000 });
   await closeButton.first().click();
+}
+
+async function openWorkspaceThroughApp(
+  page: Page,
+  input: {
+    serverId: string;
+    workspace: Awaited<ReturnType<typeof seedWorkspace>>;
+  },
+): Promise<void> {
+  await gotoAppShell(page);
+  await waitForSidebarHydration(page);
+  await switchWorkspaceViaSidebar({
+    page,
+    serverId: input.serverId,
+    workspaceId: input.workspace.workspaceId,
+  });
+  await waitForWorkspaceTabsVisible(page);
+  await expectWorkspaceLocation(page, input);
+}
+
+async function expectWorkspaceLocation(
+  page: Page,
+  input: {
+    serverId: string;
+    workspace: Awaited<ReturnType<typeof seedWorkspace>>;
+  },
+): Promise<void> {
+  await expect(page).toHaveURL(
+    buildHostWorkspaceRoute(input.serverId, input.workspace.workspaceId),
+    {
+      timeout: 30_000,
+    },
+  );
+  await expectWorkspaceHeader(page, {
+    title: input.workspace.workspaceName,
+    subtitle: input.workspace.projectDisplayName,
+  });
 }
 
 async function installDaemonWebSocketGate(page: Page) {
@@ -171,7 +209,7 @@ test.describe("Workspace navigation regression", () => {
 
       await gotoAppShell(page);
       await waitForSidebarHydration(page);
-      await page.goto(buildHostAgentDetailRoute(serverId, agent.id, agent.cwd));
+      await page.goto(buildHostAgentDetailRoute(serverId, agent.id, agent.workspaceId));
       await page.waitForURL(
         (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
         { timeout: 60_000 },
@@ -260,6 +298,41 @@ test.describe("Workspace navigation regression", () => {
     }
   });
 
+  test("refresh keeps the user on the same workspace route", async ({ page }) => {
+    const serverId = getServerId();
+    const daemonGate = await installDaemonWebSocketGate(page);
+    const workspace = await seedWorkspace({ repoPrefix: "workspace-refresh-route-" });
+
+    try {
+      const agent = await createIdleAgent(workspace.client, {
+        cwd: workspace.repoPath,
+        title: `workspace-refresh-route-${Date.now()}`,
+      });
+      await injectDesktopBridge(page, {
+        serverId,
+        manageBuiltInDaemon: true,
+        hangDaemonStart: true,
+        daemonListen: `127.0.0.1:${getE2EDaemonPort()}`,
+      });
+      await openWorkspaceThroughApp(page, { serverId, workspace });
+      await waitForWorkspaceTabsVisible(page);
+      await expectWorkspaceTabVisible(page, agent.id);
+      await expectWorkspaceLocation(page, { serverId, workspace });
+
+      await daemonGate.drop();
+      await page.reload();
+      await expect(page.getByTestId("startup-splash")).toBeVisible({ timeout: 30_000 });
+      daemonGate.restore();
+      await waitForSidebarHydration(page);
+
+      await expectWorkspaceLocation(page, { serverId, workspace });
+      await waitForWorkspaceTabsVisible(page);
+    } finally {
+      daemonGate.restore();
+      await workspace.cleanup();
+    }
+  });
+
   test("sidebar navigation and reload keep workspace selection and tabs aligned", async ({
     page,
   }) => {
@@ -292,7 +365,7 @@ test.describe("Workspace navigation regression", () => {
       await switchWorkspaceViaSidebar({
         page,
         serverId,
-        targetWorkspacePath: firstWorkspace.workspaceId,
+        workspaceId: firstWorkspace.workspaceId,
       });
       await waitForWorkspaceTabsVisible(page);
       await expect(page).toHaveURL(buildHostWorkspaceRoute(serverId, firstWorkspace.workspaceId), {
@@ -324,7 +397,7 @@ test.describe("Workspace navigation regression", () => {
       await switchWorkspaceViaSidebar({
         page,
         serverId,
-        targetWorkspacePath: secondWorkspace.workspaceId,
+        workspaceId: secondWorkspace.workspaceId,
       });
       await waitForWorkspaceTabsVisible(page);
       await expect(page).toHaveURL(buildHostWorkspaceRoute(serverId, secondWorkspace.workspaceId), {
@@ -388,7 +461,7 @@ test.describe("Workspace navigation regression", () => {
       await switchWorkspaceViaSidebar({
         page,
         serverId,
-        targetWorkspacePath: firstWorkspace.workspaceId,
+        workspaceId: firstWorkspace.workspaceId,
       });
       await waitForWorkspaceTabsVisible(page);
       await expect(page).toHaveURL(buildHostWorkspaceRoute(serverId, firstWorkspace.workspaceId), {

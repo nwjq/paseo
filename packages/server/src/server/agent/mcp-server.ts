@@ -72,7 +72,6 @@ import {
 } from "./lifecycle-command.js";
 import type { GitHubService } from "../../services/github-service.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
-import type { WorkspaceRegistry } from "../workspace-registry.js";
 import { WorktreeRequestError } from "../worktree-errors.js";
 import {
   archivePaseoWorktreeCommand,
@@ -94,7 +93,7 @@ export interface AgentMcpServerOptions {
     WorkspaceGitService,
     "getSnapshot" | "listWorktrees" | "resolveRepoRoot"
   >;
-  workspaceRegistry?: Pick<WorkspaceRegistry, "list">;
+  resolveWorkspaceIdForCwd?: ArchivePaseoWorktreeDependencies["resolveWorkspaceIdForCwd"];
   archiveWorkspaceRecord?: ArchivePaseoWorktreeDependencies["archiveWorkspaceRecord"];
   emitWorkspaceUpdatesForWorkspaceIds?: ArchivePaseoWorktreeDependencies["emitWorkspaceUpdatesForWorkspaceIds"];
   markWorkspaceArchiving?: ArchivePaseoWorktreeDependencies["markWorkspaceArchiving"];
@@ -2408,8 +2407,8 @@ function archiveWorktreeDependencies(
   if (!options.archiveWorkspaceRecord) {
     throw new Error("Workspace registry archiver is required to archive worktrees");
   }
-  if (!options.workspaceRegistry) {
-    throw new Error("Workspace registry listing is required to archive worktrees");
+  if (!options.resolveWorkspaceIdForCwd) {
+    throw new Error("Workspace resolver is required to archive worktrees");
   }
   if (!options.emitWorkspaceUpdatesForWorkspaceIds) {
     throw new Error("Workspace update emitter is required to archive worktrees");
@@ -2425,9 +2424,9 @@ function archiveWorktreeDependencies(
     worktreesRoot: options.worktreesRoot,
     github: options.github,
     workspaceGitService: options.workspaceGitService,
-    workspaceRegistry: options.workspaceRegistry,
     agentManager: context.agentManager,
     agentStorage: context.agentStorage,
+    resolveWorkspaceIdForCwd: options.resolveWorkspaceIdForCwd,
     archiveWorkspaceRecord: options.archiveWorkspaceRecord,
     emitWorkspaceUpdatesForWorkspaceIds: options.emitWorkspaceUpdatesForWorkspaceIds,
     markWorkspaceArchiving: options.markWorkspaceArchiving,
