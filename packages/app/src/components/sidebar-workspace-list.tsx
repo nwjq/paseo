@@ -1266,12 +1266,23 @@ function ProjectHeaderRow({
     }
     onWorkspacePress?.();
     router.navigate(
-      buildHostNewWorkspaceRoute(serverId, project.iconWorkingDir, {
-        displayName,
-        projectId: project.projectKey,
-      }) as Href,
+      buildHostNewWorkspaceRoute(
+        serverId,
+        workspace?.workspaceDirectory ?? project.iconWorkingDir,
+        {
+          displayName,
+          projectId: project.projectKey,
+        },
+      ) as Href,
     );
-  }, [displayName, onWorkspacePress, project.iconWorkingDir, project.projectKey, serverId]);
+  }, [
+    displayName,
+    onWorkspacePress,
+    project.iconWorkingDir,
+    project.projectKey,
+    serverId,
+    workspace?.workspaceDirectory,
+  ]);
   const interaction = useLongPressDragInteraction({
     drag,
     menuController,

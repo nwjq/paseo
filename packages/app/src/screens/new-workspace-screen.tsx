@@ -462,6 +462,20 @@ function computePickerOptionData(
   return { options: timedOptions.map((t) => t.option), itemById: idMap };
 }
 
+function resolveSelectedSourceDirectory(
+  sourceDirectory: string | undefined,
+  selectedProject: HostProjectListItem | null,
+): string | null {
+  if (
+    sourceDirectory &&
+    selectedProject &&
+    sourceDirectory.startsWith(selectedProject.iconWorkingDir)
+  ) {
+    return sourceDirectory;
+  }
+  return selectedProject?.iconWorkingDir ?? null;
+}
+
 function computeProjectOptionData(projects: readonly HostProjectListItem[]): ProjectOptionData {
   const projectByOptionId = new Map<string, HostProjectListItem>();
   const options = projects.map((project) => {
@@ -539,10 +553,12 @@ function useNewWorkspaceProjectPicker({
     [projectByOptionId],
   );
 
+  const selectedSourceDirectory = resolveSelectedSourceDirectory(sourceDirectory, selectedProject);
+
   return {
     projects,
     selectedProject,
-    selectedSourceDirectory: selectedProject?.iconWorkingDir ?? null,
+    selectedSourceDirectory,
     selectedDisplayName: selectedProject?.projectName ?? displayName,
     projectPickerOptions,
     projectByOptionId,
@@ -1025,7 +1041,7 @@ export function NewWorkspaceScreen({
       const hasFirstAgentContext = trimmedPrompt.length > 0 || input.attachments.length > 0;
 
       return {
-        cwd: selectedProject.iconWorkingDir,
+        cwd: selectedSourceDirectory ?? selectedProject.iconWorkingDir,
         projectId: selectedProject.projectKey,
         worktreeSlug: createNameId(),
         ...(hasFirstAgentContext
@@ -1039,7 +1055,7 @@ export function NewWorkspaceScreen({
         ...checkoutRequest,
       };
     },
-    [currentBranch, selectedItem, selectedProject],
+    [currentBranch, selectedItem, selectedProject, selectedSourceDirectory],
   );
 
   const ensureWorkspace = useCallback(

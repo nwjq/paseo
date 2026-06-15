@@ -22,7 +22,7 @@ export function useActiveWorktreeNewAction() {
     if (!workspace || workspace.projectKind !== "git") {
       return null;
     }
-    return workspace.projectRootPath;
+    return workspace.workspaceDirectory ?? workspace.projectRootPath;
   });
 
   const displayName = useSessionStore((state) => {
