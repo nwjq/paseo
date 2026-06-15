@@ -235,18 +235,21 @@ async function upsertWorkspaceForWorktree(options: {
     "projectRegistry" | "workspaceRegistry" | "workspaceGitService"
   >;
 }): Promise<PersistedWorkspaceRecord> {
-  const effectiveInputCwd = await resolveEffectiveInputCwd({
-    inputCwd: options.inputCwd,
-    sourceRepoRoot: options.sourceRepoRoot,
+  const normalizedInputCwd = resolve(options.inputCwd);
+  const normalizedRepoRoot = resolve(options.repoRoot);
+
+  const sourceWorkspace = await findSourceWorkspaceForWorktree({
+    inputCwd: normalizedInputCwd,
+    projectId: options.projectId,
+    repoRoot: normalizedRepoRoot,
     workspaceRegistry: options.deps.workspaceRegistry,
   });
+  const effectiveInputCwd = sourceWorkspace?.cwd ?? normalizedInputCwd;
   const normalizedCwd = resolveWorktreeWorkspaceDirectory({
     inputCwd: effectiveInputCwd,
     sourceRepoRoot: options.sourceRepoRoot,
     worktreePath: options.worktree.worktreePath,
   });
-  const normalizedInputCwd = resolve(options.inputCwd);
-  const normalizedRepoRoot = resolve(options.repoRoot);
   const existingWorkspace = await findWorkspaceByDirectory(
     normalizedCwd,
     options.deps.workspaceRegistry,
@@ -393,34 +396,23 @@ async function resolveSourceProjectForWorktree(options: {
   });
 }
 
-async function resolveEffectiveInputCwd(options: {
+async function findSourceWorkspaceForWorktree(options: {
   inputCwd: string;
-  sourceRepoRoot: string;
+  projectId?: string;
+  repoRoot: string;
   workspaceRegistry: Pick<WorkspaceRegistry, "list">;
-}): Promise<string> {
-  const normalizedInput = resolve(options.inputCwd);
-  const normalizedRoot = resolve(options.sourceRepoRoot);
-
-  function resolveSafe(p: string): string {
-    try {
-      return realpathSync.native(p);
-    } catch {
-      return p;
-    }
-  }
-
-  if (resolveSafe(normalizedInput) !== resolveSafe(normalizedRoot)) {
-    return normalizedInput;
-  }
+}): Promise<PersistedWorkspaceRecord | null> {
   const workspaces = await options.workspaceRegistry.list();
-  const subdirWorkspace = workspaces.find((ws) => {
-    if (ws.archivedAt) return false;
-    const resolvedCwd = resolveSafe(resolve(ws.cwd));
-    const resolvedRoot = resolveSafe(normalizedRoot);
-    const prefix = resolvedRoot.endsWith("/") ? resolvedRoot : `${resolvedRoot}/`;
-    return resolvedCwd.startsWith(prefix);
-  });
-  return subdirWorkspace?.cwd ?? normalizedInput;
+  const active = workspaces.filter((ws) => !ws.archivedAt && ws.kind !== "worktree");
+  if (options.projectId) {
+    const byProject = active.find((ws) => ws.projectId === options.projectId);
+    if (byProject) return byProject;
+  }
+  return (
+    active.find((ws) => ws.cwd === options.inputCwd) ??
+    active.find((ws) => ws.cwd === options.repoRoot) ??
+    null
+  );
 }
 
 async function findWorkspaceForSource(options: {

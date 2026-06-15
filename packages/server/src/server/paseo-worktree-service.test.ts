@@ -137,6 +137,11 @@ test("infers subdirectory from existing workspace when app sends repo root as cw
   execFileSync("git", ["commit", "-m", "add fitnexa2"], { cwd: repoDir, stdio: "pipe" });
 
   const deps = createDeps();
+  const sourceProject = createPersistedProjectRecordForTest({
+    projectId: repoDir,
+    rootPath: repoDir,
+    displayName: "Fitnexa2",
+  });
   const sourceWorkspace = createPersistedWorkspaceRecordForTest({
     workspaceId: "ws-subdir-checkout",
     projectId: repoDir,
@@ -144,11 +149,13 @@ test("infers subdirectory from existing workspace when app sends repo root as cw
     kind: "local_checkout",
     displayName: "develop",
   });
+  deps.projects.set(sourceProject.projectId, sourceProject);
   deps.workspaces.set(sourceWorkspace.workspaceId, sourceWorkspace);
 
   const result = await createPaseoWorktree(
     {
       cwd: repoDir,
+      projectId: repoDir,
       worktreeSlug: "from-root-cwd",
       runSetup: false,
       paseoHome: path.join(tempDir, ".paseo"),
