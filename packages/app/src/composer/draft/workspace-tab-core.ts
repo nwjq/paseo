@@ -7,7 +7,6 @@ export interface WorkspaceDraftAutoSubmitConfig {
 
 export function validateDraftSubmission(input: {
   text: string;
-  cwd: string;
   allowsEmptyAutoSubmit: boolean;
   composerState: {
     providerDefinitions: unknown[];
@@ -42,9 +41,5 @@ export function validateDraftSubmission(input: {
     workspaceDirectory,
     hasClient,
   });
-  if (!readiness.ok) return readiness.reason ?? null;
-  if (input.cwd.trim() !== workspaceDirectory) {
-    return "Workspace directory changed. Reopen the workspace and try again.";
-  }
-  return null;
+  return readiness.ok ? null : (readiness.reason ?? null);
 }

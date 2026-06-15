@@ -117,7 +117,6 @@ function resolveDraftModeId(input: {
 async function submitDraftCreateRequest(input: {
   attempt: { clientMessageId: string };
   text: string;
-  cwd: string;
   images?: UserMessageImageAttachment[];
   attachments?: unknown;
   client: DaemonClient | null;
@@ -138,7 +137,6 @@ async function submitDraftCreateRequest(input: {
   const {
     attempt,
     text,
-    cwd,
     images,
     attachments,
     client,
@@ -165,7 +163,7 @@ async function submitDraftCreateRequest(input: {
   });
   const config = buildWorkspaceDraftAgentConfig({
     provider,
-    cwd,
+    cwd: workspaceDirectory,
     ...modeIdOverride,
     model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
     thinkingOptionId:
@@ -191,7 +189,7 @@ async function submitDraftCreateRequest(input: {
 }
 
 function buildDraftAgentSnapshot(input: {
-  attempt: { timestamp: Date; cwd: string };
+  attempt: { timestamp: Date };
   serverId: string;
   tabId: string;
   workspaceDirectory: string | null;
@@ -237,7 +235,7 @@ function buildDraftAgentSnapshot(input: {
     persistence: null,
     runtimeInfo: { provider, sessionId: null, model, modeId },
     title: "Agent",
-    cwd: attempt.cwd,
+    cwd: workspaceDirectory,
     model,
     features: composerState.agentControls.features,
     thinkingOptionId,
@@ -384,7 +382,6 @@ export function WorkspaceDraftAgentTab({
     return {
       clientMessageId: pendingCreateAttempt.clientMessageId,
       text: pendingCreateAttempt.text,
-      cwd: pendingCreateAttempt.cwd,
       timestamp: new Date(pendingCreateAttempt.timestamp),
       ...(pendingCreateAttempt.images && pendingCreateAttempt.images.length > 0
         ? { images: pendingCreateAttempt.images }
@@ -442,10 +439,9 @@ export function WorkspaceDraftAgentTab({
     getPendingServerId: () => serverId,
     initialAttempt: initialCreateAttempt,
     allowEmptyText: allowsEmptyAutoSubmit,
-    validateBeforeSubmit: ({ text, cwd }) =>
+    validateBeforeSubmit: ({ text }) =>
       validateDraftSubmission({
         text,
-        cwd,
         allowsEmptyAutoSubmit,
         composerState,
         autoSubmitConfig,
@@ -469,11 +465,10 @@ export function WorkspaceDraftAgentTab({
         composerState,
         selectModelMessage: t("workspaceSetup.errors.selectModel"),
       }),
-    createRequest: async ({ attempt, text, cwd, images, attachments }) =>
+    createRequest: async ({ attempt, text, images, attachments }) =>
       submitDraftCreateRequest({
         attempt,
         text,
-        cwd,
         images,
         attachments,
         client,

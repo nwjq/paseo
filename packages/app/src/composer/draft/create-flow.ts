@@ -17,7 +17,6 @@ const EMPTY_STREAM_ITEMS: StreamItem[] = [];
 interface CreateAttempt {
   clientMessageId: string;
   text: string;
-  cwd: string;
   timestamp: Date;
   images?: UserMessageImageAttachment[];
   attachments?: AgentAttachment[];
@@ -269,7 +268,6 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
       const attempt: CreateAttempt = {
         clientMessageId: generateMessageId(),
         text: trimmedPrompt,
-        cwd,
         timestamp: new Date(),
         ...(images && images.length > 0 ? { images } : {}),
         ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),
@@ -281,7 +279,6 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
         agentId: null,
         clientMessageId: attempt.clientMessageId,
         text: attempt.text,
-        cwd: attempt.cwd,
         timestamp: attempt.timestamp.getTime(),
         ...(attempt.images && attempt.images.length > 0 ? { images: attempt.images } : {}),
         ...(attempt.attachments && attempt.attachments.length > 0

@@ -11,7 +11,6 @@ export interface PendingCreateAttempt {
   agentId: string | null;
   clientMessageId: string;
   text: string;
-  cwd: string;
   timestamp: number;
   lifecycle: CreateFlowLifecycleState;
   images?: UserMessageImageAttachment[];

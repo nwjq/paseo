@@ -1266,23 +1266,12 @@ function ProjectHeaderRow({
     }
     onWorkspacePress?.();
     router.navigate(
-      buildHostNewWorkspaceRoute(
-        serverId,
-        workspace?.workspaceDirectory ?? project.iconWorkingDir,
-        {
-          displayName,
-          projectId: project.projectKey,
-        },
-      ) as Href,
+      buildHostNewWorkspaceRoute(serverId, project.iconWorkingDir, {
+        displayName,
+        projectId: project.projectKey,
+      }) as Href,
     );
-  }, [
-    displayName,
-    onWorkspacePress,
-    project.iconWorkingDir,
-    project.projectKey,
-    serverId,
-    workspace?.workspaceDirectory,
-  ]);
+  }, [displayName, onWorkspacePress, project.iconWorkingDir, project.projectKey, serverId]);
   const interaction = useLongPressDragInteraction({
     drag,
     menuController,
@@ -2385,13 +2374,7 @@ function ProjectBlock({
             project={project}
             displayName={displayName}
             iconDataUri={iconDataUri}
-            workspace={
-              project.workspaces.find(
-                (ws) =>
-                  activeWorkspaceSelection?.workspaceId === ws.workspaceId &&
-                  activeWorkspaceSelection?.serverId === serverId,
-              ) ?? null
-            }
+            workspace={null}
             selected={false}
             chevron={rowModel.chevron}
             onPress={handleToggleCollapsed}

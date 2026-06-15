@@ -29,7 +29,6 @@ describe("useDraftAgentCreateFlow", () => {
     const attempt: DraftCreateAttempt = {
       clientMessageId: "msg-prepared",
       text: "build this",
-      cwd: "/repo",
       timestamp: new Date("2026-05-25T00:00:00.000Z"),
       images: [image],
       attachments: [attachment],

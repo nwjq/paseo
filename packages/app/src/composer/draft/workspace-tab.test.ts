@@ -17,7 +17,6 @@ function validate(overrides = {}) {
     composerState: baseComposerState,
     autoSubmitConfig: null,
     workspaceDirectory: "/tmp/project",
-    cwd: "/tmp/project",
     hasClient: true,
     ...overrides,
   });
