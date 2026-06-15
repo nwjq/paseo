@@ -88,7 +88,7 @@ test("maps subdirectory inputs onto the same subdirectory inside the worktree", 
 
   const expectedWorkspaceDirectory = path.join(result.worktree.worktreePath, "packages", "app");
   expect(result.workspace.cwd).toBe(expectedWorkspaceDirectory);
-  expect(result.workspace.workspaceId).toBe(expectedWorkspaceDirectory);
+  expect(result.workspace.workspaceId).toMatch(/^wks_[0-9a-f]{16}$/);
 });
 
 test("preserves subdirectory mapping when creating from an existing paseo worktree subdirectory", async () => {
@@ -124,7 +124,7 @@ test("preserves subdirectory mapping when creating from an existing paseo worktr
   const expectedWorkspaceDirectory = path.join(second.worktree.worktreePath, "fitnexa2");
   expect(first.workspace.cwd).toBe(path.join(first.worktree.worktreePath, "fitnexa2"));
   expect(second.workspace.cwd).toBe(expectedWorkspaceDirectory);
-  expect(second.workspace.workspaceId).toBe(expectedWorkspaceDirectory);
+  expect(second.workspace.workspaceId).toMatch(/^wks_[0-9a-f]{16}$/);
 });
 
 test("registers a new worktree in the existing root project after the main checkout workspace is removed", async () => {

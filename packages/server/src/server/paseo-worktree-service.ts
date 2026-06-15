@@ -1,5 +1,6 @@
 import type { WorkspaceGitService } from "./workspace-git-service.js";
-import { resolve } from "node:path";
+import { resolve, relative, isAbsolute } from "node:path";
+import { realpathSync } from "node:fs";
 import {
   type PersistedWorkspaceRecord,
   type ProjectRegistry,
@@ -65,6 +66,7 @@ export async function createPaseoWorktree(
     inputCwd: input.cwd,
     projectId: input.projectId,
     repoRoot: createdWorktree.repoRoot,
+    sourceRepoRoot: createdWorktree.sourceRepoRoot,
     worktree: createdWorktree.worktree,
     deps,
   });
@@ -191,17 +193,53 @@ function maybeMarkFirstAgentBranchAutoNameEligible(options: {
   });
 }
 
+function resolveWorktreeWorkspaceDirectory(options: {
+  inputCwd: string;
+  sourceRepoRoot: string;
+  worktreePath: string;
+}): string {
+  const normalizedWorktreePath = resolve(options.worktreePath);
+
+  let compInputCwd = resolve(options.inputCwd);
+  let compSourceRepoRoot = resolve(options.sourceRepoRoot);
+  try {
+    compInputCwd = realpathSync.native(compInputCwd);
+  } catch {}
+  try {
+    compSourceRepoRoot = realpathSync.native(compSourceRepoRoot);
+  } catch {}
+
+  const rel = relative(compSourceRepoRoot, compInputCwd);
+  if (!rel || rel === "." || rel.startsWith("..") || isAbsolute(rel)) {
+    return normalizedWorktreePath;
+  }
+
+  const mapped = resolve(normalizedWorktreePath, rel);
+  const rootPrefix = normalizedWorktreePath.endsWith("/")
+    ? normalizedWorktreePath
+    : `${normalizedWorktreePath}/`;
+  if (mapped !== normalizedWorktreePath && !mapped.startsWith(rootPrefix)) {
+    return normalizedWorktreePath;
+  }
+  return mapped;
+}
+
 async function upsertWorkspaceForWorktree(options: {
   inputCwd: string;
   projectId?: string;
   repoRoot: string;
+  sourceRepoRoot: string;
   worktree: WorktreeConfig;
   deps: Pick<
     CreatePaseoWorktreeDeps,
     "projectRegistry" | "workspaceRegistry" | "workspaceGitService"
   >;
 }): Promise<PersistedWorkspaceRecord> {
-  const normalizedCwd = resolve(options.worktree.worktreePath);
+  const normalizedCwd = resolveWorktreeWorkspaceDirectory({
+    inputCwd: options.inputCwd,
+    sourceRepoRoot: options.sourceRepoRoot,
+    worktreePath: options.worktree.worktreePath,
+  });
   const normalizedInputCwd = resolve(options.inputCwd);
   const normalizedRepoRoot = resolve(options.repoRoot);
   const existingWorkspace = await findWorkspaceByDirectory(
