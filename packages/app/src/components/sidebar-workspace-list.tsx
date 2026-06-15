@@ -2385,7 +2385,13 @@ function ProjectBlock({
             project={project}
             displayName={displayName}
             iconDataUri={iconDataUri}
-            workspace={null}
+            workspace={
+              project.workspaces.find(
+                (ws) =>
+                  activeWorkspaceSelection?.workspaceId === ws.workspaceId &&
+                  activeWorkspaceSelection?.serverId === serverId,
+              ) ?? null
+            }
             selected={false}
             chevron={rowModel.chevron}
             onPress={handleToggleCollapsed}
