@@ -5,7 +5,11 @@ import {
   AGENT_LIFECYCLE_STATUSES,
   type AgentLifecycleStatus,
 } from "@getpaseo/protocol/agent-lifecycle";
-import { isDelegatedAgent, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import {
+  getParentAgentIdFromLabels,
+  isDelegatedAgent,
+  PARENT_AGENT_ID_LABEL,
+} from "@getpaseo/protocol/agent-labels";
 import type { Logger } from "pino";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
@@ -23,6 +27,7 @@ import {
   type AgentPermissionResponse,
   type AgentPermissionResult,
   type AgentPersistenceHandle,
+  type AgentProviderNotice,
   type AgentPromptInput,
   type AgentProvider,
   type AgentRunOptions,
@@ -250,6 +255,12 @@ interface ManagedAgentBase {
   id: string;
   provider: AgentProvider;
   cwd: string;
+  /**
+   * Workspace this agent belongs to, stamped at creation. Independent of cwd:
+   * cwd answers "where does it run", workspaceId answers "which workspace owns it".
+   * Null/undefined for legacy agents created before ownership stamping.
+   */
+  workspaceId?: string;
   capabilities: AgentCapabilityFlags;
   config: AgentSessionConfig;
   runtimeInfo?: AgentRuntimeInfo;
@@ -339,6 +350,17 @@ type ActiveManagedAgent =
   | ManagedAgentError;
 
 type LiveManagedAgent = ActiveManagedAgent;
+type AgentLabelPatch = Record<string, string | null>;
+
+interface WriteLabelsResult {
+  record: StoredAgentRecord | null;
+  live: boolean;
+}
+
+interface AgentMetadataPatch {
+  title?: string;
+  labels?: AgentLabelPatch;
+}
 
 const SYSTEM_ERROR_PREFIX = "[System Error]";
 
@@ -364,7 +386,7 @@ interface SubscriptionRecord {
 }
 
 const BUSY_STATUSES: Set<AgentLifecycleStatus> = new Set(["initializing", "running"]);
-const AgentIdSchema = z.string().uuid();
+const AgentIdSchema = z.guid();
 
 function isAgentBusy(status: AgentLifecycleStatus): boolean {
   return BUSY_STATUSES.has(status);
@@ -395,6 +417,21 @@ function validateAgentId(agentId: string, source: string): string {
     throw new Error(`${source}: agentId must be a UUID`);
   }
   return result.data;
+}
+
+function applyLabelPatch(
+  labels: Record<string, string>,
+  patch: AgentLabelPatch,
+): Record<string, string> {
+  const nextLabels = { ...labels };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) {
+      delete nextLabels[key];
+    } else {
+      nextLabels[key] = value;
+    }
+  }
+  return nextLabels;
 }
 
 function buildExplicitTimelineSeedForRegister(
@@ -727,35 +764,37 @@ export class AgentManager {
   }
 
   async listProviderAvailability(): Promise<ProviderAvailability[]> {
-    const checks = Array.from(this.clients.keys()).map(async (provider) => {
-      const client = this.clients.get(provider);
-      if (!client) {
-        return {
-          provider,
-          available: false,
-          error: `No client registered for provider '${provider}'`,
-        } satisfies ProviderAvailability;
-      }
+    return Promise.all(
+      Array.from(this.clients.keys()).map((provider) => this.getProviderAvailability(provider)),
+    );
+  }
 
-      try {
-        const available = await client.isAvailable();
-        return {
-          provider,
-          available,
-          error: null,
-        } satisfies ProviderAvailability;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.logger.warn({ err: error, provider }, "Failed to check provider availability");
-        return {
-          provider,
-          available: false,
-          error: message,
-        } satisfies ProviderAvailability;
-      }
-    });
+  async getProviderAvailability(provider: AgentProvider): Promise<ProviderAvailability> {
+    const client = this.clients.get(provider);
+    if (!client) {
+      return {
+        provider,
+        available: false,
+        error: `No client registered for provider '${provider}'`,
+      };
+    }
 
-    return Promise.all(checks);
+    try {
+      const available = await client.isAvailable();
+      return {
+        provider,
+        available,
+        error: null,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn({ err: error, provider }, "Failed to check provider availability");
+      return {
+        provider,
+        available: false,
+        error: message,
+      };
+    }
   }
 
   async listDraftCommands(config: AgentSessionConfig): Promise<AgentSlashCommand[]> {
@@ -853,6 +892,7 @@ export class AgentManager {
       env?: Record<string, string>;
       persistSession?: boolean;
       initialTitle?: string | null;
+      workspaceId?: string;
     },
   ): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
@@ -867,6 +907,7 @@ export class AgentManager {
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       labels: options?.labels,
       initialTitle: options?.initialTitle,
+      workspaceId: options?.workspaceId,
     });
   }
 
@@ -889,6 +930,7 @@ export class AgentManager {
       updatedAt?: Date;
       lastUserMessageAt?: Date | null;
       labels?: Record<string, string>;
+      workspaceId?: string;
     },
   ): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(
@@ -922,6 +964,7 @@ export class AgentManager {
     provider: AgentProvider;
     providerHandleId: string;
     cwd: string;
+    workspaceId: string;
     labels?: Record<string, string>;
   }): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(this.idFactory(), "importProviderSession");
@@ -953,6 +996,7 @@ export class AgentManager {
 
     return this.registerSession(imported.session, importedConfig, resolvedAgentId, {
       labels: input.labels,
+      workspaceId: input.workspaceId,
       timelineRows,
       timelineNextSeq: timelineRows.length + 1,
       persistence: imported.persistence,
@@ -1019,6 +1063,7 @@ export class AgentManager {
     // Preserve existing labels and timeline during reload.
     return this.registerSession(session, storedConfig, agentId, {
       labels: existing.labels,
+      workspaceId: existing.workspaceId,
       createdAt: existing.createdAt,
       updatedAt: existing.updatedAt,
       lastUserMessageAt: existing.lastUserMessageAt,
@@ -1137,9 +1182,8 @@ export class AgentManager {
 
   // Children created via the MCP `create_agent` tool carry the parent-agent-id
   // label pointing back at the caller. Archiving the parent cascades to those
-  // children so subagent fleets don't outlive their orchestrator. Handoff agents
-  // launched the same way are caught by this cascade — see docs/agent-lifecycle.md
-  // for the accepted limitation.
+  // children so subagent fleets don't outlive their orchestrator. Detached
+  // handoff agents omit this label, so they stand outside the cascade.
   private async cascadeArchiveChildren(parentAgentId: string): Promise<void> {
     const registry = this.registry;
     if (!registry) {
@@ -1202,6 +1246,7 @@ export class AgentManager {
         id: record.id,
         provider: record.provider,
         cwd: record.cwd,
+        workspaceId: record.workspaceId,
         session: null,
         capabilities: STORED_AGENT_CAPABILITIES,
         config: buildStoredAgentConfig(record),
@@ -1232,9 +1277,9 @@ export class AgentManager {
     });
   }
 
-  async setAgentMode(agentId: string, modeId: string): Promise<void> {
+  async setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null> {
     const agent = this.requireSessionAgent(agentId);
-    await agent.session.setMode(modeId);
+    const notice = (await agent.session.setMode(modeId)) ?? null;
     const currentMode = (await agent.session.getCurrentMode()) ?? modeId;
     agent.config.modeId = currentMode ?? undefined;
     agent.currentModeId = currentMode;
@@ -1244,6 +1289,7 @@ export class AgentManager {
     }
     this.touchUpdatedAt(agent);
     this.emitState(agent);
+    return notice;
   }
 
   async setAgentModel(agentId: string, modelId: string | null): Promise<void> {
@@ -1263,15 +1309,19 @@ export class AgentManager {
     this.emitState(agent);
   }
 
-  async setAgentThinkingOption(agentId: string, thinkingOptionId: string | null): Promise<void> {
+  async setAgentThinkingOption(
+    agentId: string,
+    thinkingOptionId: string | null,
+  ): Promise<AgentProviderNotice | null> {
     const agent = this.requireSessionAgent(agentId);
     const normalizedThinkingOptionId =
       typeof thinkingOptionId === "string" && thinkingOptionId.trim().length > 0
         ? thinkingOptionId
         : null;
 
+    let notice: AgentProviderNotice | null = null;
     if (agent.session.setThinkingOption) {
-      await agent.session.setThinkingOption(normalizedThinkingOptionId);
+      notice = (await agent.session.setThinkingOption(normalizedThinkingOptionId)) ?? null;
     }
 
     agent.config.thinkingOptionId = normalizedThinkingOptionId ?? undefined;
@@ -1283,6 +1333,7 @@ export class AgentManager {
     }
     this.touchUpdatedAt(agent);
     this.emitState(agent);
+    return notice;
   }
 
   async setAgentFeature(agentId: string, featureId: string, value: unknown): Promise<void> {
@@ -1316,26 +1367,85 @@ export class AgentManager {
     this.emitState(agent, { persist: false });
   }
 
-  async setGeneratedTitle(agentId: string, title: string): Promise<void> {
-    const agent = this.requireAgent(agentId);
-    const normalizedTitle = title.trim();
-    if (!normalizedTitle) {
-      return;
-    }
-
-    const registry = this.requireRegistry();
-    const persisted = await registry.setGeneratedTitle(agent.id, normalizedTitle);
-
-    agent.updatedAt = new Date(persisted.updatedAt);
-    this.emitState(agent, { persist: false });
-  }
-
   async setLabels(agentId: string, labels: Record<string, string>): Promise<void> {
     const agent = this.requireAgent(agentId);
-    agent.labels = { ...agent.labels, ...labels };
-    this.touchUpdatedAt(agent);
-    await this.persistSnapshot(agent);
-    this.emitState(agent, { persist: false });
+    await this.writeLabels(agent.id, labels);
+  }
+
+  private async writeLabels(agentId: string, patch: AgentLabelPatch): Promise<WriteLabelsResult> {
+    const liveAgent = this.agents.get(agentId);
+    if (liveAgent) {
+      liveAgent.labels = applyLabelPatch(liveAgent.labels, patch);
+      this.touchUpdatedAt(liveAgent);
+      await this.persistSnapshot(liveAgent);
+      this.emitState(liveAgent, { persist: false });
+      const record = this.registry ? await this.registry.get(agentId) : null;
+      return { record, live: true };
+    }
+
+    const nextRecord = await this.writeStoredMetadata(agentId, { labels: patch });
+    return { record: nextRecord, live: false };
+  }
+
+  private async writeStoredMetadata(
+    agentId: string,
+    patch: AgentMetadataPatch,
+  ): Promise<StoredAgentRecord> {
+    const registry = this.requireRegistry();
+    const record = await registry.get(agentId);
+    if (!record) {
+      throw new Error(`Agent not found: ${agentId}`);
+    }
+
+    const nextRecord = {
+      ...record,
+      ...(patch.title ? { title: patch.title } : {}),
+      ...(patch.labels ? { labels: applyLabelPatch(record.labels, patch.labels) } : {}),
+      updatedAt: this.nextStoredUpdatedAt(record),
+    };
+    await registry.upsert(nextRecord);
+    return nextRecord;
+  }
+
+  async detachAgent(agentId: string): Promise<{
+    record: StoredAgentRecord;
+    live: boolean;
+    previousParentAgentId: string | null;
+  }> {
+    const registry = this.requireRegistry();
+    const liveAgent = this.agents.get(agentId);
+    if (liveAgent) {
+      const previousParentAgentId = getParentAgentIdFromLabels(liveAgent.labels);
+      if (!previousParentAgentId) {
+        await this.persistSnapshot(liveAgent);
+        const record = await registry.get(agentId);
+        if (!record) {
+          throw new Error(`Agent not found in storage after detach: ${agentId}`);
+        }
+        return { record, live: true, previousParentAgentId: null };
+      }
+
+      const { record } = await this.writeLabels(agentId, { [PARENT_AGENT_ID_LABEL]: null });
+      if (!record) {
+        throw new Error(`Agent not found in storage after detach: ${agentId}`);
+      }
+      return { record, live: true, previousParentAgentId };
+    }
+
+    const record = await registry.get(agentId);
+    if (!record) {
+      throw new Error(`Agent not found: ${agentId}`);
+    }
+    const previousParentAgentId = getParentAgentIdFromLabels(record.labels);
+    if (!previousParentAgentId) {
+      return { record, live: false, previousParentAgentId: null };
+    }
+
+    const result = await this.writeLabels(agentId, { [PARENT_AGENT_ID_LABEL]: null });
+    if (!result.record) {
+      throw new Error(`Agent not found in storage after detach: ${agentId}`);
+    }
+    return { record: result.record, live: false, previousParentAgentId };
   }
 
   notifyAgentState(agentId: string): void {
@@ -1393,9 +1503,12 @@ export class AgentManager {
       return false;
     }
 
+    await this.unarchiveNativeSession(record.provider, record.persistence);
+
     await registry.upsert({
       ...record,
       archivedAt: null,
+      updatedAt: new Date().toISOString(),
     });
 
     if (this.getAgent(agentId)) {
@@ -1432,23 +1545,12 @@ export class AgentManager {
         await this.setTitle(agentId, updates.title);
       }
       if (updates.labels) {
-        await this.setLabels(agentId, updates.labels);
+        await this.writeLabels(agentId, updates.labels);
       }
       return;
     }
 
-    const registry = this.requireRegistry();
-    const existing = await registry.get(agentId);
-    if (!existing) {
-      throw new Error(`Agent not found: ${agentId}`);
-    }
-
-    await registry.upsert({
-      ...existing,
-      ...(updates.title ? { title: updates.title } : {}),
-      ...(updates.labels ? { labels: { ...existing.labels, ...updates.labels } } : {}),
-      updatedAt: this.nextStoredUpdatedAt(existing),
-    });
+    await this.writeStoredMetadata(agentId, updates);
   }
 
   async runAgent(
@@ -2333,6 +2435,7 @@ export class AgentManager {
       attention?: AttentionState;
       initialTitle?: string | null;
       publishWhenReady?: boolean;
+      workspaceId?: string;
     },
   ): Promise<ManagedAgent> {
     const resolvedAgentId = validateAgentId(agentId, "registerSession");
@@ -2432,6 +2535,7 @@ export class AgentManager {
           lastError?: string;
           attention?: AttentionState;
           persistence?: AgentPersistenceHandle;
+          workspaceId?: string;
         }
       | undefined;
   }): ActiveManagedAgent {
@@ -2440,6 +2544,7 @@ export class AgentManager {
       id: resolvedAgentId,
       provider: config.provider,
       cwd: config.cwd,
+      workspaceId: options?.workspaceId,
       session,
       capabilities: session.capabilities,
       config,
@@ -3665,6 +3770,16 @@ export class AgentManager {
         "Failed to archive native session (best-effort)",
       );
     }
+  }
+
+  private async unarchiveNativeSession(
+    provider: AgentProvider,
+    persistence: AgentPersistenceHandle | null | undefined,
+  ): Promise<void> {
+    if (!persistence) return;
+    const client = this.clients.get(provider);
+    if (!client?.unarchiveNativeSession) return;
+    await client.unarchiveNativeSession(persistence);
   }
 
   private requireAgent(id: string): LiveManagedAgent {

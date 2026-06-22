@@ -50,7 +50,7 @@ export type ReconciliationChange =
       kind: "workspace_updated";
       workspaceId: string;
       directory: string;
-      fields: Partial<Pick<PersistedWorkspaceRecord, "projectId" | "displayName" | "kind">>;
+      fields: Partial<Pick<PersistedWorkspaceRecord, "projectId" | "branch" | "kind">>;
     };
 
 export interface ReconciliationResult {
@@ -159,36 +159,19 @@ export class WorkspaceReconciliationService {
     // 2. Merge duplicate active project records that point at the same repo root.
     await this.mergeDuplicateProjectsByRoot(activeProjects, workspacesByProject, changes);
 
-    // 3. Archive orphaned projects (all workspaces archived/removed)
-    const orphanedProjects = activeProjects.filter((project) => {
-      const siblings = workspacesByProject.get(project.projectId) ?? [];
-      return siblings.length === 0;
-    });
-    await Promise.all(
-      orphanedProjects.map(async (project) => {
-        const latestWorkspaces = await this.workspaceRegistry.list();
-        const stillHasActiveWorkspace = latestWorkspaces.some(
-          (workspace) => !workspace.archivedAt && workspace.projectId === project.projectId,
-        );
-        if (stillHasActiveWorkspace) {
-          return;
-        }
-        const timestamp = new Date().toISOString();
-        await this.projectRegistry.archive(project.projectId, timestamp);
-        changes.push({
-          kind: "project_archived",
-          projectId: project.projectId,
-          directory: project.rootPath,
-          reason: "no_active_workspaces",
-        });
-      }),
+    // 3. Reconcile git metadata for active projects whose directories still exist.
+    //    Projects persist until explicitly removed, even when they currently have
+    //    zero active workspaces, so they still reconcile their own metadata.
+    //    Skip projects archived earlier in this pass (e.g. merged duplicates) so we
+    //    don't resurrect them by upserting a stale, non-archived copy.
+    const archivedProjectIds = new Set(
+      changes
+        .filter((change) => change.kind === "project_archived")
+        .map((change) => change.projectId),
     );
-
-    // 4. Reconcile git metadata for active projects whose directories still exist
     const projectsToReconcile = activeProjects.filter((project) => {
       if (project.archivedAt) return false;
-      const siblings = workspacesByProject.get(project.projectId) ?? [];
-      if (siblings.length === 0) return false;
+      if (archivedProjectIds.has(project.projectId)) return false;
       if (!existsSync(project.rootPath)) return false;
       return true;
     });
@@ -270,6 +253,14 @@ export class WorkspaceReconciliationService {
 
       for (const project of duplicateProjects) {
         workspacesByProject.set(project.projectId, []);
+        const timestamp = new Date().toISOString();
+        await this.projectRegistry.archive(project.projectId, timestamp);
+        changes.push({
+          kind: "project_archived",
+          projectId: project.projectId,
+          directory: project.rootPath,
+          reason: "merged_duplicate",
+        });
       }
     }
   }
@@ -307,14 +298,8 @@ export class WorkspaceReconciliationService {
     siblings: PersistedWorkspaceRecord[],
     changes: ReconciliationChange[],
   ): Promise<void> {
-    const latestProject = (await this.projectRegistry.get(project.projectId)) ?? project;
-    if (latestProject.archivedAt) {
-      return;
-    }
-
-    const projectRootPath = latestProject.rootPath;
-    const directoryName = projectRootPath.split(/[\\/]/).findLast(Boolean) ?? projectRootPath;
-    const currentGit = await this.readWorkspaceGitMetadata(projectRootPath, directoryName);
+    const directoryName = project.rootPath.split(/[\\/]/).findLast(Boolean) ?? project.rootPath;
+    const currentGit = await this.readWorkspaceGitMetadata(project.rootPath, directoryName);
 
     const projectUpdates: Partial<
       Pick<PersistedProjectRecord, "kind" | "displayName" | "rootPath">
@@ -322,23 +307,15 @@ export class WorkspaceReconciliationService {
 
     const mappedKind = currentGit.projectKind === "git" ? "git" : "non_git";
 
-    if (latestProject.kind !== mappedKind) {
+    if (project.kind !== mappedKind) {
       projectUpdates.kind = mappedKind;
       projectUpdates.displayName = currentGit.projectDisplayName;
     }
 
     if (
+      project.kind === "git" &&
       currentGit.projectKind === "git" &&
-      currentGit.repoRoot &&
-      latestProject.rootPath !== currentGit.repoRoot
-    ) {
-      projectUpdates.rootPath = currentGit.repoRoot;
-    }
-
-    if (
-      latestProject.kind === "git" &&
-      currentGit.projectKind === "git" &&
-      latestProject.displayName !== currentGit.projectDisplayName
+      project.displayName !== currentGit.projectDisplayName
     ) {
       projectUpdates.displayName = currentGit.projectDisplayName;
     }
@@ -346,41 +323,33 @@ export class WorkspaceReconciliationService {
     if (Object.keys(projectUpdates).length > 0) {
       const timestamp = new Date().toISOString();
       await this.projectRegistry.upsert({
-        ...latestProject,
+        ...project,
         ...projectUpdates,
         updatedAt: timestamp,
       });
       changes.push({
         kind: "project_updated",
-        projectId: latestProject.projectId,
-        directory: latestProject.rootPath,
+        projectId: project.projectId,
+        directory: project.rootPath,
         fields: projectUpdates,
       });
     }
 
+    const existingSiblings = siblings.filter((workspace) => existsSync(workspace.cwd));
     await Promise.all(
-      siblings.map(async (workspace) => {
-        const latestWorkspace = await this.workspaceRegistry.get(workspace.workspaceId);
-        if (!latestWorkspace || latestWorkspace.archivedAt || !existsSync(latestWorkspace.cwd)) {
-          return;
-        }
+      existingSiblings.map(async (workspace) => {
+        const wsDirName = workspace.cwd.split(/[\\/]/).findLast(Boolean) ?? workspace.cwd;
+        const wsGit = await this.readWorkspaceGitMetadata(workspace.cwd, wsDirName);
 
-        const wsDirName =
-          latestWorkspace.cwd.split(/[\\/]/).findLast(Boolean) ?? latestWorkspace.cwd;
-        const wsGit = await this.readWorkspaceGitMetadata(latestWorkspace.cwd, wsDirName);
         const expectedKind = deriveWorkspaceKindFromMetadata(wsGit);
 
-        const workspaceUpdates: Partial<Pick<PersistedWorkspaceRecord, "displayName" | "kind">> =
-          {};
+        const workspaceUpdates: Partial<Pick<PersistedWorkspaceRecord, "branch" | "kind">> = {};
 
-        if (
-          wsGit.projectKind === "git" &&
-          latestWorkspace.displayName !== wsGit.workspaceDisplayName
-        ) {
-          workspaceUpdates.displayName = wsGit.workspaceDisplayName;
+        if (wsGit.projectKind === "git" && workspace.branch !== wsGit.currentBranch) {
+          workspaceUpdates.branch = wsGit.currentBranch;
         }
 
-        if (latestWorkspace.kind !== expectedKind) {
+        if (workspace.kind !== expectedKind) {
           workspaceUpdates.kind = expectedKind;
         }
 
@@ -390,14 +359,14 @@ export class WorkspaceReconciliationService {
 
         const timestamp = new Date().toISOString();
         await this.workspaceRegistry.upsert({
-          ...latestWorkspace,
+          ...workspace,
           ...workspaceUpdates,
           updatedAt: timestamp,
         });
         changes.push({
           kind: "workspace_updated",
-          workspaceId: latestWorkspace.workspaceId,
-          directory: latestWorkspace.cwd,
+          workspaceId: workspace.workspaceId,
+          directory: workspace.cwd,
           fields: workspaceUpdates,
         });
       }),

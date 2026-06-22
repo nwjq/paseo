@@ -6,7 +6,6 @@ import {
   selectHasWorkspaces,
   selectProjectOrder,
   selectRecommendedProjectPaths,
-  selectResolveWorkspaceIdByCwd,
   selectWorkspace,
   selectWorkspaceDirectory,
   selectWorkspaceFields,
@@ -17,7 +16,11 @@ import {
   workspaceEqualityFns,
   type SidebarOrderSnapshot,
 } from "./selectors";
-import { useSessionStore, type WorkspaceDescriptor } from "../session-store";
+import {
+  useSessionStore,
+  type EmptyProjectDescriptor,
+  type WorkspaceDescriptor,
+} from "../session-store";
 
 const SERVER_ID = "test-server";
 
@@ -86,6 +89,12 @@ function emptySidebarOrder(): SidebarOrderSnapshot {
     projectOrderByServerId: {},
     workspaceOrderByServerAndProject: {},
   };
+}
+
+function selectWorkspaceStructureProjectKeys(
+  state: Parameters<typeof selectWorkspaceStructureProjects>[0],
+): string[] {
+  return selectWorkspaceStructureProjects(state, SERVER_ID).map((project) => project.projectKey);
 }
 
 afterEach(() => {
@@ -209,6 +218,38 @@ describe("workspace structure composition", () => {
     });
   }
 
+  it("keeps a project parent visible throughout the last workspace archive transition", () => {
+    const workspace = createWorkspace({
+      id: "workspace-a",
+      projectId: "project-a",
+      projectDisplayName: "Project A",
+      projectRootPath: "/repo/a",
+      workspaceDirectory: "/repo/a",
+    });
+    const emptyProject: EmptyProjectDescriptor = {
+      projectId: "project-a",
+      projectDisplayName: "Project A",
+      projectCustomName: null,
+      projectRootPath: "/repo/a",
+      projectKind: "git",
+    };
+    initializeWorkspaces([workspace]);
+
+    const emittedProjectKeys = [selectWorkspaceStructureProjectKeys(useSessionStore.getState())];
+    const stop = useSessionStore.subscribe((state) => {
+      emittedProjectKeys.push(selectWorkspaceStructureProjectKeys(state));
+    });
+
+    try {
+      useSessionStore.getState().removeWorkspace(SERVER_ID, workspace.id);
+      useSessionStore.getState().addEmptyProject(SERVER_ID, emptyProject);
+    } finally {
+      stop();
+    }
+
+    expect(emittedProjectKeys).toEqual([["project-a"], ["project-a"]]);
+  });
+
   it("changes for membership updates but not status-only updates", () => {
     const workspaceA = createWorkspace({ id: "workspace-a", name: "A" });
     const workspaceB = createWorkspace({ id: "workspace-b", name: "B" });
@@ -230,6 +271,29 @@ describe("workspace structure composition", () => {
     expect(tracked.current).toBe(afterAdd);
 
     tracked.stop();
+  });
+
+  it("renders a project parent with zero active workspaces", () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null as unknown as DaemonClient);
+    useSessionStore.getState().setWorkspaces(SERVER_ID, new Map());
+    useSessionStore.getState().setEmptyProjects(SERVER_ID, [
+      {
+        projectId: "empty-project",
+        projectDisplayName: "Empty Project",
+        projectCustomName: null,
+        projectRootPath: "/repo/empty",
+        projectKind: "git",
+      },
+    ]);
+
+    const projects = selectWorkspaceStructureProjects(useSessionStore.getState(), SERVER_ID);
+    expect(projects).toEqual([
+      expect.objectContaining({
+        projectKey: "empty-project",
+        projectName: "Empty Project",
+        workspaceKeys: [],
+      }),
+    ]);
   });
 
   it("changes when a structure-relevant project identity field changes", () => {
@@ -356,33 +420,6 @@ describe("selectHasWorkspaces", () => {
     const before = tracked.current;
 
     useSessionStore.getState().mergeWorkspaces(SERVER_ID, [workspaceB]);
-    expect(tracked.current).toBe(before);
-
-    tracked.stop();
-  });
-});
-
-describe("selectResolveWorkspaceIdByCwd", () => {
-  it("resolves by cwd and stays stable under unrelated updates", () => {
-    const workspaceA = createWorkspace({
-      id: "workspace-a",
-      workspaceDirectory: "/repo/a",
-    });
-    const workspaceB = createWorkspace({
-      id: "workspace-b",
-      workspaceDirectory: "/repo/b",
-    });
-    initializeWorkspaces([workspaceA, workspaceB]);
-
-    const tracked = trackSelector(
-      useSessionStore,
-      (state) => selectResolveWorkspaceIdByCwd(state, SERVER_ID, "/repo/a"),
-      workspaceEqualityFns.identity,
-    );
-    const before = tracked.current;
-    expect(before).toBe("workspace-a");
-
-    useSessionStore.getState().mergeWorkspaces(SERVER_ID, [{ ...workspaceB, status: "running" }]);
     expect(tracked.current).toBe(before);
 
     tracked.stop();

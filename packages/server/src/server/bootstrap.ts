@@ -6,7 +6,6 @@ import { randomUUID } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { Logger } from "pino";
 import { z } from "zod";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
@@ -67,12 +66,15 @@ export function parseListenString(listen: string): ListenTarget {
   }
   // 6. host:port — TCP
   if (listen.includes(":")) {
-    const [host, portStr] = listen.split(":");
+    const lastColonIdx = listen.lastIndexOf(":");
+    const host = listen.slice(0, lastColonIdx);
+    const portStr = listen.slice(lastColonIdx + 1);
     const parsedPort = parseInt(portStr, 10);
     if (!Number.isFinite(parsedPort)) {
       throw new Error(`Invalid port in listen string: ${listen}`);
     }
-    return { type: "tcp", host: host || "127.0.0.1", port: parsedPort };
+    const cleanHost = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+    return { type: "tcp", host: cleanHost || "127.0.0.1", port: parsedPort };
   }
   throw new Error(`Invalid listen string: ${listen}`);
 }
@@ -89,7 +91,10 @@ function formatListenTarget(listenTarget: ListenTarget | null): string | null {
 
 import { VoiceAssistantWebSocketServer } from "./websocket-server.js";
 import { createGitHubService } from "../services/github-service.js";
-import { createPaseoWorktree as createRegisteredPaseoWorktree } from "./paseo-worktree-service.js";
+import {
+  createPaseoWorktree as createRegisteredPaseoWorktree,
+  createLocalCheckoutWorkspace,
+} from "./paseo-worktree-service.js";
 import { createPaseoWorktreeWorkflow } from "./worktree-session.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/config.js";
@@ -110,8 +115,11 @@ import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
 import { DaemonConfigStore } from "./daemon-config-store.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
-import { resolveRegisteredWorkspaceIdForCwd } from "./workspace-directory.js";
-import { archivePersistedWorkspaceRecord } from "./workspace-archive-service.js";
+import { resolveWorkspaceIdForPath } from "./resolve-workspace-id-for-path.js";
+import {
+  archivePersistedWorkspaceRecord,
+  type ActiveWorkspaceRef,
+} from "./workspace-archive-service.js";
 import { setupAutoArchiveOnMerge } from "./auto-archive-on-merge/index.js";
 import { wrapSessionMessage, type SessionOutboundMessage } from "./messages.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
@@ -134,14 +142,18 @@ import { createServiceProxySubsystem, type ServiceProxySubsystem } from "./servi
 import { ScriptHealthMonitor } from "./script-health-monitor.js";
 import { createScriptStatusEmitter } from "./script-status-projection.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
+import {
+  createManagedProcessRegistry,
+  createSystemManagedProcessTable,
+  type ManagedProcessRegistry,
+} from "./managed-processes/managed-processes.js";
+import { terminateWithTreeKill } from "../utils/tree-kill.js";
 import { isHostnameAllowed, type HostnamesConfig } from "./hostnames.js";
 import {
   createRequireBearerMiddleware,
   isAgentMcpRequestAuthorized,
   type DaemonAuthConfig,
 } from "./auth.js";
-
-type AgentMcpTransportMap = Map<string, StreamableHTTPServerTransport>;
 
 const MAX_MCP_DEBUG_BATCH_ITEMS = 10;
 const REDACTED_LOG_VALUE = "[redacted]";
@@ -349,6 +361,7 @@ export interface PaseoDaemonConfig {
   log?: PersistedConfig["log"];
   onLifecycleIntent?: (intent: DaemonLifecycleIntent) => void;
   pushNotificationSender?: PushNotificationSender;
+  managedProcesses?: ManagedProcessRegistry;
 }
 
 export interface PaseoDaemon {
@@ -361,6 +374,32 @@ export interface PaseoDaemon {
   start(): Promise<void>;
   stop(): Promise<void>;
   getListenTarget(): ListenTarget | null;
+}
+
+function createBootstrapManagedProcessRegistry(
+  config: Pick<PaseoDaemonConfig, "paseoHome" | "managedProcesses">,
+  logger: Logger,
+): ManagedProcessRegistry {
+  if (config.managedProcesses) {
+    return config.managedProcesses;
+  }
+
+  return createManagedProcessRegistry({
+    paseoHome: config.paseoHome,
+    processTable: createSystemManagedProcessTable(),
+    terminateProcess: terminateWithTreeKill,
+    logger,
+  });
+}
+
+async function reconcileManagedProcessLedger(
+  managedProcesses: ManagedProcessRegistry,
+  logger: Logger,
+): Promise<void> {
+  const reapResult = await managedProcesses.reapStale();
+  if (reapResult.checked > 0 || reapResult.errors.length > 0) {
+    logger.info(reapResult, "Managed helper process ledger reconciled");
+  }
 }
 
 export async function createPaseoDaemon(
@@ -399,6 +438,13 @@ export async function createPaseoDaemon(
 
   const serverId = getOrCreateServerId(config.paseoHome, { logger });
   const daemonKeyPair = await loadOrCreateDaemonKeyPair(config.paseoHome, logger);
+  const managedProcesses = createBootstrapManagedProcessRegistry(config, logger);
+  // Reconcile the helper-process ledger in the background so it never blocks the
+  // daemon from coming up; terminating a live leftover can take a few seconds.
+  // Best-effort, so a failure is logged here rather than crashing startup.
+  void reconcileManagedProcessLedger(managedProcesses, logger).catch((error) => {
+    logger.warn({ err: error }, "Failed to reconcile managed helper process ledger");
+  });
   let relayTransport: RelayTransportController | null = null;
 
   const staticDir = config.staticDir;
@@ -639,6 +685,7 @@ export async function createPaseoDaemon(
     runtimeSettings: config.agentProviderSettings,
     providerOverrides: config.providerOverrides,
     workspaceGitService,
+    managedProcesses,
     isDev: config.isDev === true,
     extraClients: config.agentClients,
   });
@@ -745,11 +792,29 @@ export async function createPaseoDaemon(
     await archivePersistedWorkspaceRecord({
       workspaceId,
       workspaceRegistry,
-      projectRegistry,
     });
   };
-  const resolveWorkspaceIdForCwdExternal = async (cwd: string): Promise<string | null> => {
-    return resolveRegisteredWorkspaceIdForCwd(cwd, await workspaceRegistry.list());
+  // external path→workspace adapter, not ownership: archive-by-path requests that
+  // arrive with a worktree path and no workspaceId (old clients / CLI).
+  const findWorkspaceIdForCwdExternal = async (cwd: string): Promise<string | null> => {
+    return resolveWorkspaceIdForPath(cwd, await workspaceRegistry.list());
+  };
+  const ensureWorkspaceForCreateExternal = async (cwd: string): Promise<string> => {
+    const workspace = await createLocalCheckoutWorkspace(
+      { cwd },
+      { projectRegistry, workspaceRegistry, workspaceGitService },
+    );
+    return workspace.workspaceId;
+  };
+  const listActiveWorkspacesExternal = async (): Promise<ActiveWorkspaceRef[]> => {
+    const workspaces = await workspaceRegistry.list();
+    return workspaces
+      .filter((workspace) => !workspace.archivedAt)
+      .map((workspace) => ({
+        workspaceId: workspace.workspaceId,
+        cwd: workspace.cwd,
+        kind: workspace.kind,
+      }));
   };
   const markWorkspaceArchivingExternal = (workspaceIds: Iterable<string>, archivingAt: string) => {
     const workspaceIdList = Array.from(workspaceIds);
@@ -777,7 +842,7 @@ export async function createPaseoDaemon(
 
   setupAutoArchiveOnMerge({
     paseoHome: config.paseoHome,
-    worktreesRoot: config.worktreesRoot,
+    paseoWorktreesBaseRoot: config.worktreesRoot,
     daemonConfigStore,
     workspaceGitService,
     github,
@@ -785,7 +850,8 @@ export async function createPaseoDaemon(
     agentStorage,
     terminalManager,
     logger,
-    resolveWorkspaceIdForCwd: resolveWorkspaceIdForCwdExternal,
+    findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
+    listActiveWorkspaces: listActiveWorkspacesExternal,
     archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
     markWorkspaceArchiving: markWorkspaceArchivingExternal,
     clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
@@ -796,9 +862,8 @@ export async function createPaseoDaemon(
   let agentMcpBaseUrl: string | null = null;
   if (mcpEnabled) {
     const agentMcpRoute = "/mcp/agents";
-    const agentMcpTransports: AgentMcpTransportMap = new Map();
 
-    const createAgentMcpTransport = async (callerAgentId?: string) => {
+    const createAgentMcpSession = async (callerAgentId?: string) => {
       const agentMcpServer = await createAgentMcpServer({
         agentManager,
         agentStorage,
@@ -808,11 +873,13 @@ export async function createPaseoDaemon(
         providerSnapshotManager,
         github,
         workspaceGitService,
-        resolveWorkspaceIdForCwd: resolveWorkspaceIdForCwdExternal,
+        findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
+        listActiveWorkspaces: listActiveWorkspacesExternal,
         archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
         emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
         markWorkspaceArchiving: markWorkspaceArchivingExternal,
         clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
+        ensureWorkspaceForCreate: ensureWorkspaceForCreateExternal,
         createPaseoWorktree: async (input, serviceOptions) => {
           return createPaseoWorktreeWorkflow(
             {
@@ -838,13 +905,8 @@ export async function createPaseoDaemon(
                     .map((session) => session.warmWorkspaceGitDataForWorkspace(workspace)) ?? [],
                 );
               },
-              emitWorkspaceUpdateForCwd: async (cwd, emitOptions) => {
-                await Promise.all(
-                  wsServer
-                    ?.listActiveSessions()
-                    .map((session) => session.emitWorkspaceUpdatesForExternalCwds([cwd])) ?? [],
-                );
-                void emitOptions;
+              emitWorkspaceUpdateForWorkspaceId: async (workspaceId) => {
+                await emitWorkspaceUpdatesExternal([workspaceId]);
               },
               cacheWorkspaceSetupSnapshot: () => {},
               emit: emitExternalSessionMessage,
@@ -873,34 +935,25 @@ export async function createPaseoDaemon(
         logger,
       });
 
+      // Stateless mode: each HTTP request builds a fresh server + transport that is
+      // torn down when the response closes, so no per-session state is retained between
+      // requests. The agent control plane only lists and calls tools, neither of which
+      // needs cross-request state, so sessions would only pin memory for the life of the
+      // daemon (agents that exit without a clean DELETE never get reaped).
       const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID(),
-        onsessioninitialized: (sessionId) => {
-          agentMcpTransports.set(sessionId, transport);
-          logger.debug({ sessionId }, "Agent MCP session initialized");
-        },
-        onsessionclosed: (sessionId) => {
-          agentMcpTransports.delete(sessionId);
-          logger.debug({ sessionId }, "Agent MCP session closed");
-        },
+        sessionIdGenerator: undefined,
         // NOTE: We enforce a Vite-like host allowlist at the app/websocket layer.
         // StreamableHTTPServerTransport's built-in check requires exact Host header matches.
         enableDnsRebindingProtection: false,
       });
-
       Object.assign(transport, {
-        onclose: () => {
-          if (transport.sessionId) {
-            agentMcpTransports.delete(transport.sessionId);
-          }
-        },
         onerror: (err: Error) => {
           logger.error({ err }, "Agent MCP transport error");
         },
       });
 
       await agentMcpServer.connect(transport);
-      return transport;
+      return { server: agentMcpServer, transport };
     };
 
     const runAgentMcpRequest = async (
@@ -934,41 +987,32 @@ export async function createPaseoDaemon(
         );
       }
       try {
-        const sessionId = req.header("mcp-session-id");
-        let transport = sessionId ? agentMcpTransports.get(sessionId) : undefined;
-
-        if (!transport) {
-          if (req.method !== "POST") {
-            res.status(400).json({
-              jsonrpc: "2.0",
-              error: {
-                code: -32000,
-                message: "Missing or invalid MCP session",
-              },
-              id: null,
-            });
-            return;
-          }
-          if (!isInitializeRequest(req.body)) {
-            res.status(400).json({
-              jsonrpc: "2.0",
-              error: {
-                code: -32000,
-                message: "Initialization request expected",
-              },
-              id: null,
-            });
-            return;
-          }
-          const callerAgentIdRaw = req.query.callerAgentId;
-          let callerAgentId: string | undefined;
-          if (typeof callerAgentIdRaw === "string") {
-            callerAgentId = callerAgentIdRaw;
-          } else if (Array.isArray(callerAgentIdRaw) && typeof callerAgentIdRaw[0] === "string") {
-            callerAgentId = callerAgentIdRaw[0];
-          }
-          transport = await createAgentMcpTransport(callerAgentId);
+        // Stateless: GET (standalone SSE) and DELETE (session termination) have no
+        // meaning without sessions. The MCP client tolerates 405 on the GET stream
+        // and never issues a DELETE because it is never handed a session id.
+        if (req.method !== "POST") {
+          res.status(405).json({
+            jsonrpc: "2.0",
+            error: {
+              code: -32000,
+              message: "Method not allowed",
+            },
+            id: null,
+          });
+          return;
         }
+        const callerAgentIdRaw = req.query.callerAgentId;
+        let callerAgentId: string | undefined;
+        if (typeof callerAgentIdRaw === "string") {
+          callerAgentId = callerAgentIdRaw;
+        } else if (Array.isArray(callerAgentIdRaw) && typeof callerAgentIdRaw[0] === "string") {
+          callerAgentId = callerAgentIdRaw[0];
+        }
+        const { server, transport } = await createAgentMcpSession(callerAgentId);
+        res.on("close", () => {
+          void transport.close();
+          void server.close();
+        });
 
         await transport.handleRequest(
           req as unknown as IncomingMessage,

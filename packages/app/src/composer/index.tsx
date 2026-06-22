@@ -196,6 +196,8 @@ function buildAgentStateSelector(serverId: string, agentId: string) {
       contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
       contextWindowUsedTokens: agent?.lastUsage?.contextWindowUsedTokens ?? null,
       totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
+      model: agent?.model ?? null,
+      provider: agent?.provider ?? null,
     };
   };
 }
@@ -205,8 +207,12 @@ function renderContextWindowMeter(
   contextWindowUsedTokens: number | null,
   totalCostUsd: number | null,
   showPercentage: boolean,
+  serverId: string,
+  provider: string | null,
+  pending: boolean,
 ): ReactElement | null {
-  if (contextWindowMaxTokens === null || contextWindowUsedTokens === null) {
+  const hasData = contextWindowMaxTokens !== null && contextWindowUsedTokens !== null;
+  if (!hasData && !pending) {
     return null;
   }
   return (
@@ -215,6 +221,9 @@ function renderContextWindowMeter(
       usedTokens={contextWindowUsedTokens}
       totalCostUsd={totalCostUsd}
       showPercentage={showPercentage}
+      serverId={serverId}
+      provider={provider}
+      pending={pending}
     />
   );
 }
@@ -734,6 +743,8 @@ interface ComposerProps {
   allowEmptySubmit?: boolean;
   /** Optional accessibility label for the primary submit button. */
   submitButtonAccessibilityLabel?: string;
+  /** Optional testID for the primary submit button. */
+  submitButtonTestID?: string;
   submitIcon?: "arrow" | "return";
   /** Externally controlled loading state. When true, disables the submit button. */
   isSubmitLoading?: boolean;
@@ -951,6 +962,7 @@ export function Composer({
   hasExternalContent = false,
   allowEmptySubmit = false,
   submitButtonAccessibilityLabel,
+  submitButtonTestID,
   submitIcon = "arrow",
   isSubmitLoading = false,
   submitBehavior = "clear",
@@ -1633,6 +1645,9 @@ export function Composer({
     agentState.contextWindowUsedTokens,
   );
 
+  const contextWindowPending =
+    agentState.status === "initializing" || agentState.status === "running";
+
   const contextWindowMeter = useMemo(
     () =>
       renderContextWindowMeter(
@@ -1640,8 +1655,19 @@ export function Composer({
         contextWindowUsedTokens,
         agentState.totalCostUsd,
         isCompactLayout,
+        serverId,
+        agentState.provider,
+        contextWindowPending,
       ),
-    [contextWindowMaxTokens, contextWindowUsedTokens, agentState.totalCostUsd, isCompactLayout],
+    [
+      contextWindowMaxTokens,
+      contextWindowUsedTokens,
+      agentState.totalCostUsd,
+      isCompactLayout,
+      serverId,
+      agentState.provider,
+      contextWindowPending,
+    ],
   );
   const { beforeVoiceContent, footerInlineContent } = useMemo(
     () => resolveContextWindowPlacement(contextWindowMeter, isCompactLayout),
@@ -1864,9 +1890,11 @@ export function Composer({
               hasExternalContent={hasExternalContent}
               allowEmptySubmit={allowEmptySubmit}
               submitButtonAccessibilityLabel={submitButtonAccessibilityLabel}
+              submitButtonTestID={submitButtonTestID}
               submitIcon={submitIcon}
               isSubmitDisabled={isSubmitBusy}
               isSubmitLoading={isSubmitBusy}
+              preserveHeightOnSubmit={submitBehavior === "preserve-and-lock"}
               attachments={selectedAttachments}
               cwd={cwd}
               attachmentMenuItems={attachmentMenuItems}

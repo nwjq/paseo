@@ -19,6 +19,7 @@ import type { WorkspaceGitService } from "./workspace-git-service.js";
 export interface CreateWorktreeCoreInput {
   cwd: string;
   worktreeSlug?: string;
+  branchName?: string;
   refName?: string;
   action?: "branch-off" | "checkout";
   githubPrNumber?: number;
@@ -30,7 +31,7 @@ export interface CreateWorktreeCoreInput {
 
 export interface CreateWorktreeCoreDeps {
   github: GitHubService;
-  workspaceGitService?: Pick<WorkspaceGitService, "getSnapshot" | "resolveDefaultBranch">;
+  workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot" | "resolveDefaultBranch">;
   resolveDefaultBranch?: (repoRoot: string) => Promise<string>;
 }
 
@@ -38,7 +39,6 @@ export interface CreateWorktreeCoreResult {
   worktree: WorktreeConfig;
   intent: WorktreeCreationIntent;
   repoRoot: string;
-  sourceRepoRoot: string;
   created: boolean;
 }
 
@@ -46,9 +46,12 @@ export async function createWorktreeCore(
   input: CreateWorktreeCoreInput,
   deps: CreateWorktreeCoreDeps,
 ): Promise<CreateWorktreeCoreResult> {
-  const { repoRoot, sourceRepoRoot } = await resolveWorktreeRoots(input, deps.workspaceGitService);
+  const repoRoot = await resolveWorktreeRepoRoot(input, deps.workspaceGitService);
   const requestedWorktreeSlug = input.worktreeSlug
     ? normalizeWorktreeSlug(input.worktreeSlug)
+    : undefined;
+  const requestedBranchName = input.branchName
+    ? validateWorktreeSlug(input.branchName.trim())
     : undefined;
 
   let intentInput: ResolveWorktreeCreationIntentInput;
@@ -70,6 +73,7 @@ export async function createWorktreeCore(
     intentInput = {
       action: "branch-off",
       refName: input.refName,
+      branchName: requestedBranchName,
       worktreeSlug,
     };
   }
@@ -82,7 +86,7 @@ export async function createWorktreeCore(
 
   switch (intent.kind) {
     case "branch-off": {
-      normalizedSlug = intent.branchName;
+      normalizedSlug = requestedWorktreeSlug ?? normalizeWorktreeSlug(intent.branchName);
       break;
     }
     case "checkout-branch": {
@@ -103,7 +107,7 @@ export async function createWorktreeCore(
     worktreesRoot: input.worktreesRoot,
   });
   if (existingWorktree) {
-    return { worktree: existingWorktree, intent, repoRoot, sourceRepoRoot, created: false };
+    return { worktree: existingWorktree, intent, repoRoot, created: false };
   }
 
   return {
@@ -117,7 +121,6 @@ export async function createWorktreeCore(
     }),
     intent,
     repoRoot,
-    sourceRepoRoot,
     created: true,
   };
 }
@@ -135,26 +138,15 @@ async function resolveDefaultBranch(
   return baseBranch;
 }
 
-export async function resolveWorktreeRoots(
+export async function resolveWorktreeRepoRoot(
   input: Pick<CreateWorktreeCoreInput, "cwd" | "paseoHome">,
-  workspaceGitService?: Pick<WorkspaceGitService, "getSnapshot">,
-): Promise<{ repoRoot: string; sourceRepoRoot: string }> {
+  workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">,
+): Promise<string> {
   if (!workspaceGitService) {
     throw new Error("Create worktree requires WorkspaceGitService");
   }
 
-  const snapshot = await workspaceGitService.getSnapshot(input.cwd);
-  if (!snapshot.git.isGit) {
-    throw new Error("Create worktree requires a git repository");
-  }
-
-  const fallbackCwd = input.cwd;
-  return {
-    repoRoot: snapshot.git.isPaseoOwnedWorktree
-      ? (snapshot.git.mainRepoRoot ?? snapshot.git.repoRoot ?? fallbackCwd)
-      : (snapshot.git.repoRoot ?? fallbackCwd),
-    sourceRepoRoot: snapshot.git.repoRoot ?? fallbackCwd,
-  };
+  return workspaceGitService.resolveRepoRoot(input.cwd);
 }
 
 function validateWorktreeSlug(slug: string): string {

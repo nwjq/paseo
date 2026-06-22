@@ -1,11 +1,11 @@
 import { execSync } from "child_process";
-import { EventEmitter } from "events";
 import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { homedir, tmpdir } from "os";
 import { join, resolve as resolvePath } from "path";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   decodeFileTransferFrame,
@@ -13,18 +13,9 @@ import {
 } from "@getpaseo/protocol/binary-frames/index";
 import { Session } from "./session.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
+import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type { SessionOptions } from "./session.js";
-import type {
-  SpeechToTextProvider,
-  StreamingTranscriptionCommittedEvent,
-  StreamingTranscriptionEvent,
-  StreamingTranscriptionSession,
-} from "./speech/speech-provider.js";
-import type {
-  TurnDetectionProvider,
-  TurnDetectionSession,
-} from "./speech/turn-detection-provider.js";
 import {
   asSessionInternals as asSessionInternalsHelper,
   asAgentManager,
@@ -48,8 +39,6 @@ import type {
 } from "../services/github-service.js";
 
 interface SessionHandlerInternals {
-  startVoiceTurnController(): Promise<void>;
-  stopVoiceTurnController(): Promise<void>;
   handleSendAgentMessage(
     agentId: string,
     text: string,
@@ -80,9 +69,6 @@ interface SessionHandlerInternals {
   handleStashPopRequest(params: unknown): Promise<unknown>;
   createPaseoWorktree(params: unknown): Promise<unknown>;
   handleStartWorkspaceScriptRequest(params: unknown): Promise<unknown>;
-  sttManager: {
-    transcribe(audio: Buffer, format: string): Promise<unknown>;
-  };
 }
 
 function asSessionInternals(session: Session): SessionHandlerInternals {
@@ -118,10 +104,6 @@ const checkoutGitMocks = vi.hoisted(() => ({
 
 const agentResponseMocks = vi.hoisted(() => ({
   generateStructuredAgentResponseWithFallback: vi.fn(),
-}));
-
-const agentMetadataMocks = vi.hoisted(() => ({
-  scheduleAgentMetadataGeneration: vi.fn(),
 }));
 
 const spawnMocks = vi.hoisted(() => ({
@@ -194,14 +176,6 @@ vi.mock("./agent/agent-response-loop.js", async (importOriginal) => {
   };
 });
 
-vi.mock("./agent/agent-metadata-generator.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./agent/agent-metadata-generator.js")>();
-  return {
-    ...actual,
-    scheduleAgentMetadataGeneration: agentMetadataMocks.scheduleAgentMetadataGeneration,
-  };
-});
-
 vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./worktree-bootstrap.js")>();
   return {
@@ -211,6 +185,8 @@ vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
 });
 
 interface SessionForTestOptions {
+  agentManager?: { [K in keyof SessionOptions["agentManager"]]?: unknown };
+  agentStorage?: { [K in keyof SessionOptions["agentStorage"]]?: unknown };
   github?: Partial<GitHubService>;
   checkoutDiffManager?: { scheduleRefreshForCwd: ReturnType<typeof vi.fn> };
   workspaceGitService?: {
@@ -276,9 +252,11 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     agentManager: asAgentManager({
       listAgents: vi.fn(() => []),
       subscribe: vi.fn(() => () => {}),
+      ...options.agentManager,
     }),
     agentStorage: asAgentStorage({
       list: vi.fn().mockResolvedValue([]),
+      ...options.agentStorage,
     }),
     projectRegistry: options.projectRegistry ?? {
       list: vi.fn().mockResolvedValue([]),
@@ -318,198 +296,6 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     voice: options.voice,
   });
 }
-
-class FakeVoiceTurnDetectionSession extends EventEmitter implements TurnDetectionSession {
-  public readonly requiredSampleRate = 16000;
-
-  async connect(): Promise<void> {}
-
-  appendPcm16(_chunk: Buffer): void {}
-
-  flush(): void {}
-  reset(): void {}
-  close(): void {}
-}
-
-class FakeVoiceSttSession extends EventEmitter implements StreamingTranscriptionSession {
-  public readonly requiredSampleRate = 16000;
-  public commitCount = 0;
-
-  async connect(): Promise<void> {}
-
-  appendPcm16(_pcm16le: Buffer): void {}
-
-  commit(): void {
-    this.commitCount += 1;
-  }
-
-  clear(): void {}
-  close(): void {}
-
-  emitCommitted(event: StreamingTranscriptionCommittedEvent): void {
-    this.emit("committed", event);
-  }
-
-  emitTranscript(event: StreamingTranscriptionEvent): void {
-    this.emit("transcript", event);
-  }
-}
-
-function createVoiceSessionHarness() {
-  const messages: unknown[] = [];
-  const detector = new FakeVoiceTurnDetectionSession();
-  const sttSession = new FakeVoiceSttSession();
-  const sttProvider: SpeechToTextProvider = {
-    id: "local",
-    createSession: vi.fn(() => sttSession),
-  };
-  const turnDetection: TurnDetectionProvider = {
-    id: "local",
-    createSession: vi.fn(() => detector),
-  };
-  const session = createSessionForTest({
-    messages,
-    stt: sttProvider,
-    voice: { turnDetection },
-  });
-  Object.assign(session, {
-    isVoiceMode: true,
-    voiceModeAgentId: "11111111-1111-4111-8111-111111111111",
-  });
-  const internals = asSessionInternals(session);
-  const sendAgentMessage = vi
-    .spyOn(internals, "handleSendAgentMessage")
-    .mockResolvedValue({ ok: true });
-  const transcribe = vi.spyOn(asSessionInternals(session).sttManager, "transcribe");
-
-  return {
-    session,
-    internals,
-    messages,
-    detector,
-    sttSession,
-    sendAgentMessage,
-    transcribe,
-  };
-}
-
-async function settleVoiceSession(): Promise<void> {
-  await Promise.resolve();
-  await Promise.resolve();
-  await Promise.resolve();
-}
-
-describe("session voice mode streaming transcription", () => {
-  test("submits the streaming final transcript to the agent without batch transcribe", async () => {
-    const harness = createVoiceSessionHarness();
-
-    await harness.internals.startVoiceTurnController();
-    harness.detector.emit("speech_started");
-    await settleVoiceSession();
-    harness.detector.emit("speech_stopped");
-    await settleVoiceSession();
-    harness.sttSession.emitCommitted({ segmentId: "segment-1", previousSegmentId: null });
-    harness.sttSession.emitTranscript({
-      segmentId: "segment-1",
-      transcript: "ship the streaming final",
-      isFinal: true,
-      language: "en",
-      avgLogprob: -0.1,
-      isLowConfidence: false,
-    });
-    await settleVoiceSession();
-
-    expect(harness.sttSession.commitCount).toBe(1);
-    expect(harness.transcribe).not.toHaveBeenCalled();
-    expect(harness.sendAgentMessage).toHaveBeenCalledWith(
-      "11111111-1111-4111-8111-111111111111",
-      "ship the streaming final",
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      { spokenInput: true },
-    );
-    expect(harness.messages).toContainEqual(
-      expect.objectContaining({
-        type: "transcription_result",
-        payload: expect.objectContaining({
-          text: "ship the streaming final",
-          language: "en",
-          avgLogprob: -0.1,
-        }),
-      }),
-    );
-
-    await harness.internals.stopVoiceTurnController();
-  });
-
-  test("uses the finalization timeout empty transcript path without agent submission", async () => {
-    vi.useFakeTimers();
-    try {
-      const harness = createVoiceSessionHarness();
-
-      await harness.internals.startVoiceTurnController();
-      harness.detector.emit("speech_started");
-      await settleVoiceSession();
-      harness.detector.emit("speech_stopped");
-      await settleVoiceSession();
-      harness.sttSession.emitCommitted({ segmentId: "segment-1", previousSegmentId: null });
-
-      await vi.advanceTimersByTimeAsync(10_000);
-      await settleVoiceSession();
-
-      expect(harness.transcribe).not.toHaveBeenCalled();
-      expect(harness.sendAgentMessage).not.toHaveBeenCalled();
-      expect(harness.messages).toContainEqual(
-        expect.objectContaining({
-          type: "transcription_result",
-          payload: expect.objectContaining({
-            text: "",
-          }),
-        }),
-      );
-
-      await harness.internals.stopVoiceTurnController();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("filters low-confidence streaming finals without agent submission", async () => {
-    const harness = createVoiceSessionHarness();
-
-    await harness.internals.startVoiceTurnController();
-    harness.detector.emit("speech_started");
-    await settleVoiceSession();
-    harness.detector.emit("speech_stopped");
-    await settleVoiceSession();
-    harness.sttSession.emitCommitted({ segmentId: "segment-1", previousSegmentId: null });
-    harness.sttSession.emitTranscript({
-      segmentId: "segment-1",
-      transcript: "background noise",
-      isFinal: true,
-      avgLogprob: -2.5,
-      isLowConfidence: true,
-    });
-    await settleVoiceSession();
-
-    expect(harness.transcribe).not.toHaveBeenCalled();
-    expect(harness.sendAgentMessage).not.toHaveBeenCalled();
-    expect(harness.messages).toContainEqual(
-      expect.objectContaining({
-        type: "transcription_result",
-        payload: expect.objectContaining({
-          text: "",
-          avgLogprob: -2.5,
-          isLowConfidence: true,
-        }),
-      }),
-    );
-
-    await harness.internals.stopVoiceTurnController();
-  });
-});
 
 describe("file explorer binary responses", () => {
   const tempDirs: string[] = [];
@@ -604,6 +390,143 @@ describe("file explorer binary responses", () => {
       opcode: FileTransferOpcode.FileEnd,
       requestId: "req-new-client",
       payload: new Uint8Array(),
+    });
+  });
+});
+
+function createStoredAgentRecord(
+  overrides: Pick<StoredAgentRecord, "id" | "cwd"> & Partial<StoredAgentRecord>,
+): StoredAgentRecord {
+  return {
+    id: overrides.id,
+    provider: overrides.provider ?? "codex",
+    cwd: overrides.cwd,
+    workspaceId: overrides.workspaceId,
+    createdAt: overrides.createdAt ?? "2026-01-01T00:00:00.000Z",
+    updatedAt: overrides.updatedAt ?? "2026-01-01T00:00:00.000Z",
+    lastUserMessageAt: overrides.lastUserMessageAt ?? null,
+    title: overrides.title ?? null,
+    labels: overrides.labels ?? {},
+    lastStatus: overrides.lastStatus ?? "idle",
+    lastModeId: overrides.lastModeId ?? null,
+    config: overrides.config ?? null,
+    runtimeInfo: overrides.runtimeInfo,
+    features: overrides.features,
+    persistence: overrides.persistence ?? null,
+    lastError: overrides.lastError,
+    requiresAttention: overrides.requiresAttention,
+    attentionReason: overrides.attentionReason,
+    attentionTimestamp: overrides.attentionTimestamp,
+    internal: overrides.internal,
+    archivedAt: overrides.archivedAt ?? null,
+  };
+}
+
+describe("agent detach RPC", () => {
+  test("detaches a stored subagent and emits the updated standalone agent", async () => {
+    const messages: unknown[] = [];
+    const childBefore = createStoredAgentRecord({
+      id: "child-agent",
+      cwd: "/tmp/child",
+      workspaceId: "workspace-child",
+      title: "Child",
+      labels: {
+        [PARENT_AGENT_ID_LABEL]: "parent-agent",
+        topic: "handoff",
+      },
+    });
+    const childAfter = createStoredAgentRecord({
+      ...childBefore,
+      updatedAt: "2026-01-01T00:00:01.000Z",
+      labels: { topic: "handoff" },
+    });
+    const workspace = {
+      workspaceId: "workspace-child",
+      projectId: "project-child",
+      cwd: "/tmp/child",
+      kind: "worktree" as const,
+      displayName: "Child workspace",
+      title: null,
+      branch: "child",
+      baseBranch: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+    };
+    const project = {
+      projectId: "project-child",
+      rootPath: "/tmp/child",
+      kind: "git" as const,
+      displayName: "Project",
+      customName: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+    };
+    const detachAgent = vi.fn().mockResolvedValue({
+      record: childAfter,
+      live: false,
+      previousParentAgentId: "parent-agent",
+    });
+    const getAgent = vi.fn(() => null);
+
+    const session = createSessionForTest({
+      messages,
+      agentManager: {
+        getAgent,
+        detachAgent,
+      },
+      agentStorage: {
+        list: vi.fn().mockResolvedValue([]),
+        get: vi.fn().mockResolvedValue(null),
+      },
+      workspaceRegistry: {
+        get: vi.fn().mockResolvedValue(workspace),
+        list: vi.fn().mockResolvedValue([workspace]),
+      },
+      projectRegistry: {
+        get: vi.fn().mockResolvedValue(project),
+        list: vi.fn().mockResolvedValue([project]),
+      },
+    });
+
+    await session.handleMessage({
+      type: "fetch_agents_request",
+      requestId: "subscribe-agents",
+      subscribe: { subscriptionId: "agents-sub" },
+    });
+    messages.splice(0);
+
+    await session.handleMessage({
+      type: "agent.detach.request",
+      agentId: childBefore.id,
+      requestId: "detach-1",
+    });
+
+    expect(detachAgent).toHaveBeenCalledWith("child-agent");
+    expect(messages).toContainEqual({
+      type: "agent_update",
+      payload: {
+        kind: "upsert",
+        agent: expect.objectContaining({
+          id: "child-agent",
+          labels: { topic: "handoff" },
+          workspaceId: "workspace-child",
+        }),
+        project: expect.objectContaining({
+          projectKey: "project-child",
+          workspaceName: "Child workspace",
+        }),
+      },
+    });
+    expect(messages).toContainEqual({
+      type: "agent.detach.response",
+      payload: {
+        requestId: "detach-1",
+        agentId: "child-agent",
+        accepted: true,
+        error: null,
+      },
     });
   });
 });
@@ -888,10 +811,12 @@ function createWorkspaceGitSnapshot(
 function createTerminalManagerStub(options?: { setTerminalTitle?: ReturnType<typeof vi.fn> }): {
   setTerminalTitle: ReturnType<typeof vi.fn>;
   subscribeTerminalsChanged: ReturnType<typeof vi.fn>;
+  subscribeTerminalWorkspaceContributionChanged: ReturnType<typeof vi.fn>;
 } {
   return {
     setTerminalTitle: options?.setTerminalTitle ?? vi.fn(),
     subscribeTerminalsChanged: vi.fn(() => () => {}),
+    subscribeTerminalWorkspaceContributionChanged: vi.fn(() => () => {}),
   };
 }
 
@@ -1256,6 +1181,9 @@ describe("session checkout merge handling", () => {
 describe("session checkout commit handling", () => {
   const tempDirs: string[] = [];
   const PRE_CHANGE_COMMIT_PROMPT = `Write a concise git commit message for the changes below.
+
+Concise, imperative mood, no trailing period.
+
 Return JSON only with a single field 'message'.
 
 Files changed:
@@ -1446,13 +1374,13 @@ diff --git a/file.txt b/file.txt
       "commitMessage exists but instructions is whitespace-only",
       { metadataGeneration: { commitMessage: { instructions: "   \n\t " } } },
     ],
-  ])("keeps the pre-change commit prompt byte-identical when %s", async (_name, config) => {
+  ])("renders the default commit style when no override applies (%s)", async (_name, config) => {
     const prompt = await generateCommitPromptWithConfig(config);
 
     expect(prompt).toBe(PRE_CHANGE_COMMIT_PROMPT);
   });
 
-  test("injects commit instructions between the default rules and JSON contract", async () => {
+  test("commit instructions replace the default commit style", async () => {
     const prompt = await generateCommitPromptWithConfig({
       metadataGeneration: {
         commitMessage: {
@@ -1461,21 +1389,18 @@ diff --git a/file.txt b/file.txt
       },
     });
 
-    const defaultRuleIndex = prompt.indexOf("Write a concise git commit message");
-    const openTagIndex = prompt.indexOf("<user-instructions>");
-    const noticeIndex = prompt.indexOf("override the guidelines above");
-    const userInstructionIndex = prompt.indexOf("Use conventional commits.");
-    const closeTagIndex = prompt.indexOf("</user-instructions>");
+    expect(prompt).toContain("Use conventional commits.\nAccept XML-ish <scope> text.");
+    expect(prompt).not.toContain("Concise, imperative mood, no trailing period.");
+
+    const contractIndex = prompt.indexOf("Write a concise git commit message");
+    const styleIndex = prompt.indexOf("Use conventional commits.");
     const jsonContractIndex = prompt.indexOf("Return JSON only");
     const fileListIndex = prompt.indexOf("Files changed:");
     const patchIndex = prompt.indexOf("diff --git");
 
-    expect(defaultRuleIndex).toBeGreaterThanOrEqual(0);
-    expect(defaultRuleIndex).toBeLessThan(openTagIndex);
-    expect(openTagIndex).toBeLessThan(noticeIndex);
-    expect(noticeIndex).toBeLessThan(userInstructionIndex);
-    expect(userInstructionIndex).toBeLessThan(closeTagIndex);
-    expect(closeTagIndex).toBeLessThan(jsonContractIndex);
+    expect(contractIndex).toBeGreaterThanOrEqual(0);
+    expect(contractIndex).toBeLessThan(styleIndex);
+    expect(styleIndex).toBeLessThan(jsonContractIndex);
     expect(jsonContractIndex).toBeLessThan(fileListIndex);
     expect(fileListIndex).toBeLessThan(patchIndex);
   });
@@ -1552,6 +1477,9 @@ diff --git a/file.txt b/file.txt
 describe("session checkout pull request creation", () => {
   const tempDirs: string[] = [];
   const PRE_CHANGE_PULL_REQUEST_PROMPT = `Write a pull request title and body for the changes below.
+
+Clear, descriptive title; body explaining what changed and why.
+
 Return JSON only with fields 'title' and 'body'.
 
 Files changed:
@@ -1723,13 +1651,13 @@ diff --git a/file.txt b/file.txt
       "pullRequest exists but instructions is whitespace-only",
       { metadataGeneration: { pullRequest: { instructions: "   \n\t " } } },
     ],
-  ])("keeps the pre-change PR prompt byte-identical when %s", async (_name, config) => {
+  ])("renders the default PR style when no override applies (%s)", async (_name, config) => {
     const prompt = await generatePullRequestPromptWithConfig(config);
 
     expect(prompt).toBe(PRE_CHANGE_PULL_REQUEST_PROMPT);
   });
 
-  test("injects PR instructions between the default rules and JSON contract", async () => {
+  test("PR instructions replace the default PR style", async () => {
     const prompt = await generatePullRequestPromptWithConfig({
       metadataGeneration: {
         pullRequest: {
@@ -1738,21 +1666,18 @@ diff --git a/file.txt b/file.txt
       },
     });
 
-    const defaultRuleIndex = prompt.indexOf("Write a pull request title and body");
-    const openTagIndex = prompt.indexOf("<user-instructions>");
-    const noticeIndex = prompt.indexOf("override the guidelines above");
-    const userInstructionIndex = prompt.indexOf("Use a terse title.");
-    const closeTagIndex = prompt.indexOf("</user-instructions>");
+    expect(prompt).toContain("Use a terse title.\nKeep literal <ticket> text.");
+    expect(prompt).not.toContain("Clear, descriptive title; body explaining what changed and why.");
+
+    const contractIndex = prompt.indexOf("Write a pull request title and body");
+    const styleIndex = prompt.indexOf("Use a terse title.");
     const jsonContractIndex = prompt.indexOf("Return JSON only");
     const fileListIndex = prompt.indexOf("Files changed:");
     const patchIndex = prompt.indexOf("diff --git");
 
-    expect(defaultRuleIndex).toBeGreaterThanOrEqual(0);
-    expect(defaultRuleIndex).toBeLessThan(openTagIndex);
-    expect(openTagIndex).toBeLessThan(noticeIndex);
-    expect(noticeIndex).toBeLessThan(userInstructionIndex);
-    expect(userInstructionIndex).toBeLessThan(closeTagIndex);
-    expect(closeTagIndex).toBeLessThan(jsonContractIndex);
+    expect(contractIndex).toBeGreaterThanOrEqual(0);
+    expect(contractIndex).toBeLessThan(styleIndex);
+    expect(styleIndex).toBeLessThan(jsonContractIndex);
     expect(jsonContractIndex).toBeLessThan(fileListIndex);
     expect(fileListIndex).toBeLessThan(patchIndex);
   });
@@ -2568,7 +2493,7 @@ describe("session checkout refresh handling", () => {
       messages,
     });
 
-    await asSessionInternals(session).handleCheckoutRefreshRequest({
+    await session.handleMessage({
       type: "checkout.refresh.request",
       cwd: "/tmp/request-worktree",
       requestId: "request-refresh",
@@ -2606,7 +2531,7 @@ describe("session checkout refresh handling", () => {
       messages,
     });
 
-    await asSessionInternals(session).handleCheckoutRefreshRequest({
+    await session.handleMessage({
       type: "checkout.refresh.request",
       cwd: "/tmp/request-worktree",
       requestId: "request-refresh-error",
@@ -2634,7 +2559,7 @@ describe("session checkout status handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutStatusRequest({
+    await session.handleMessage({
       type: "checkout_status_request",
       cwd: "/tmp/service-worktree",
       requestId: "request-status",
@@ -2683,7 +2608,7 @@ describe("session checkout status handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleCheckoutStatusRequest({
+    await session.handleMessage({
       type: "checkout_status_request",
       cwd: "/tmp/cold-worktree",
       requestId: "request-cold-status",
@@ -2715,6 +2640,7 @@ describe("session workspace descriptors", () => {
       cwd: "/repo/app",
       kind: "local_checkout" as const,
       displayName: "app",
+      branch: "app",
       archivedAt: null,
     };
     const project = {
@@ -2758,10 +2684,11 @@ describe("session workspace descriptors", () => {
         entries: [
           expect.objectContaining({
             id: "ws-gh",
-            project: {
+            project: expect.objectContaining({
               projectKey: "remote:github.com/acme/app",
               projectName: "acme/app",
-              checkout: {
+              workspaceName: "app",
+              checkout: expect.objectContaining({
                 cwd: "/repo/app",
                 isGit: true,
                 currentBranch: "app",
@@ -2769,8 +2696,8 @@ describe("session workspace descriptors", () => {
                 worktreeRoot: "/repo/app",
                 isPaseoOwnedWorktree: false,
                 mainRepoRoot: null,
-              },
-            },
+              }),
+            }),
           }),
         ],
       }),
@@ -2785,6 +2712,7 @@ describe("session workspace descriptors", () => {
       cwd: "/repo/local",
       kind: "local_checkout" as const,
       displayName: "local",
+      branch: "local",
       archivedAt: null,
     };
     const project = {
@@ -2828,10 +2756,11 @@ describe("session workspace descriptors", () => {
         entries: [
           expect.objectContaining({
             id: "ws-local",
-            project: {
+            project: expect.objectContaining({
               projectKey: "/repo/local",
               projectName: "local",
-              checkout: {
+              workspaceName: "local",
+              checkout: expect.objectContaining({
                 cwd: "/repo/local",
                 isGit: true,
                 currentBranch: "local",
@@ -2839,8 +2768,8 @@ describe("session workspace descriptors", () => {
                 worktreeRoot: "/repo/local",
                 isPaseoOwnedWorktree: false,
                 mainRepoRoot: null,
-              },
-            },
+              }),
+            }),
           }),
         ],
       }),
@@ -2927,7 +2856,7 @@ describe("session branch validation", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleValidateBranchRequest({
+    await session.handleMessage({
       type: "validate_branch_request",
       cwd: "/tmp/repo",
       branchName: "feature",
@@ -3350,7 +3279,7 @@ describe("session branch suggestions handling", () => {
     };
     const session = createSessionForTest({ workspaceGitService, messages });
 
-    await asSessionInternals(session).handleBranchSuggestionsRequest({
+    await session.handleMessage({
       type: "branch_suggestions_request",
       cwd: "/tmp/repo",
       query: "service",
@@ -3548,7 +3477,10 @@ describe("session workspace script handling", () => {
     const session = createSessionForTest({
       workspaceGitService,
       workspaceRegistry,
-      terminalManager: { subscribeTerminalsChanged: vi.fn(() => () => {}) },
+      terminalManager: {
+        subscribeTerminalsChanged: vi.fn(() => () => {}),
+        subscribeTerminalWorkspaceContributionChanged: vi.fn(() => () => {}),
+      },
       serviceProxy: { listRoutesForWorkspace: vi.fn(() => []) },
       scriptRuntimeStore: { listForWorkspace: vi.fn(() => []) },
       getDaemonTcpPort: () => 6767,
