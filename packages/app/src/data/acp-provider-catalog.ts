@@ -68,10 +68,10 @@ const CATALOG_DATA = [
     id: "codebuddy-code",
     title: "Codebuddy Code",
     description: "Tencent Cloud's official intelligent coding tool",
-    version: "2.109.0",
+    version: "2.109.1",
     iconId: "codebuddy-code",
     installLink: "https://www.codebuddy.cn/cli/",
-    command: ["npx", "-y", "@tencent-ai/codebuddy-code@2.109.0", "--acp"],
+    command: ["npx", "-y", "@tencent-ai/codebuddy-code@2.109.1", "--acp"],
   },
   {
     id: "codewhale",
@@ -150,10 +150,10 @@ const CATALOG_DATA = [
     title: "Dirac",
     description:
       "Reduces API costs by more than 50%, produces better and faster work. Uses Hash anchored parallel edits, AST manipulation and a whole lot of neat optimizations. Fully Open Source.",
-    version: "0.4.1",
+    version: "0.4.3",
     iconId: "dirac",
     installLink: "https://dirac.run",
-    command: ["npx", "-y", "dirac-cli@0.4.1", "--acp"],
+    command: ["npx", "-y", "dirac-cli@0.4.3", "--acp"],
   },
   {
     id: "factory-droid",
@@ -311,10 +311,10 @@ const CATALOG_DATA = [
     id: "qwen-code",
     title: "Qwen Code",
     description: "Alibaba's Qwen coding assistant",
-    version: "0.18.4",
+    version: "0.18.5",
     iconId: "qwen-code",
     installLink: "https://qwenlm.github.io/qwen-code-docs/en/users/overview",
-    command: ["npx", "-y", "@qwen-code/qwen-code@0.18.4", "--acp", "--experimental-skills"],
+    command: ["npx", "-y", "@qwen-code/qwen-code@0.18.5", "--acp", "--experimental-skills"],
   },
   {
     id: "sigit",
