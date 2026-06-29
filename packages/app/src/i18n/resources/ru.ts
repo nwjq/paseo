@@ -165,7 +165,7 @@ export const ru: TranslationResources = {
     hints: {
       thinking: "Режим мышления",
       model: "Изменить модель",
-      mode: "Изменить режим разрешений",
+      mode: "Изменить режим",
     },
   },
   agentStream: {
@@ -736,6 +736,9 @@ export const ru: TranslationResources = {
         failedOpen: "Не удалось открыть рабочую область",
       },
       pr: {
+        actions: {
+          viewPullRequest: "Открыть",
+        },
         sections: {
           checks: "Чеки",
           reviews: "Отзывы",
@@ -1462,6 +1465,8 @@ export const ru: TranslationResources = {
           en: "English",
           es: "Español",
           fr: "Français",
+          ja: "日本語",
+          ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "中文",
         },
@@ -1473,6 +1478,22 @@ export const ru: TranslationResources = {
       playTest: "Игровой тест",
       playing: "Игра...",
       playbackFailed: "Ошибка воспроизведения:{{message}}",
+      app: {
+        title: "App diagnostic",
+        rowTitle: "App diagnostic",
+        rowHint: "Collect connection, daemon, provider, desktop, and log details",
+        run: "Run",
+        running: "Running diagnostic...",
+        copyLabel: "diagnostic",
+        copyAccessibility: "Copy diagnostic",
+        copyFailed: "Failed to copy diagnostic",
+        refreshAccessibility: "Refresh diagnostic",
+        refreshingAccessibility: "Refreshing diagnostic",
+        progress: {
+          client: "Client",
+          desktop: "Desktop",
+        },
+      },
     },
     about: {
       title: "О",
@@ -1594,6 +1615,7 @@ export const ru: TranslationResources = {
         toggleFocusMode: "Переключить режим фокусировки",
         cycleTheme: "Циклическая тема",
         focusMessageInput: "Фокус ввода сообщения",
+        cycleAgentMode: "Переключить режим агента",
         toggleVoiceMode: "Переключить голосовой режим",
         startStopDictation: "Начать диктовку /stop",
         interruptAgent: "Агент прерываний",

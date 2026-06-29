@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.1.101 - 2026-06-26
+
+### Added
+
+- Copy a troubleshooting report from Settings when support needs host, daemon, provider, and log details ([#1728](https://github.com/getpaseo/paseo/pull/1728))
+- Claude image tool results now render as images in chat ([#1717](https://github.com/getpaseo/paseo/pull/1717))
+- Added Japanese ([#1694](https://github.com/getpaseo/paseo/pull/1694) by [@sysCat64](https://github.com/sysCat64))
+- Added Brazilian Portuguese ([#1653](https://github.com/getpaseo/paseo/pull/1653) by [@Alcimerio](https://github.com/Alcimerio))
+
+### Improved
+
+- Provider diagnostics stay useful even when model discovery is slow ([#1724](https://github.com/getpaseo/paseo/pull/1724))
+- Slow provider requests no longer make the app look disconnected ([#1723](https://github.com/getpaseo/paseo/pull/1723))
+- Worktrees linked to differently named tracked branches find their PRs correctly ([#1718](https://github.com/getpaseo/paseo/pull/1718))
+- Workspaces started from slash-command prompts get clearer names ([#1709](https://github.com/getpaseo/paseo/pull/1709))
+- ACP provider catalog updated to the latest registry versions
+
+### Fixed
+
+- Pi no longer creates empty sessions while loading new-agent options ([#1727](https://github.com/getpaseo/paseo/pull/1727))
+- Windows daemon status finds the daemon process more reliably ([#1725](https://github.com/getpaseo/paseo/pull/1725))
+- OpenAI voice credentials no longer affect other OpenAI-backed tools
+- Provider model lists no longer disappear during refresh
+
+## 0.1.100 - 2026-06-24
+
+### Added
+
+- Cycle agent modes with Shift+Tab
+- Select a custom Copilot agent when starting or mid-session ([#1700](https://github.com/getpaseo/paseo/pull/1700))
+
+### Improved
+
+- ACP provider catalog updated to the latest registry versions
+
+### Fixed
+
+- Claude no longer sends an extra API request after each message ([#1701](https://github.com/getpaseo/paseo/pull/1701))
+- OpenCode no longer leaves stray background servers running after sessions end ([#1697](https://github.com/getpaseo/paseo/pull/1697))
+- Slash commands and skills now load in OMP agents ([#1698](https://github.com/getpaseo/paseo/pull/1698))
+
+## 0.1.99 - 2026-06-23
+
+### Improved
+
+- The PR panel now has a refresh button and clearer loading states ([#1664](https://github.com/getpaseo/paseo/pull/1664))
+- Provider diagnostics and model lists now stay in sync ([#1660](https://github.com/getpaseo/paseo/pull/1660))
+
+### Fixed
+
+- ACP providers like Grok no longer show duplicate user messages
+- Saved composer modes no longer reset while provider data is loading ([#1658](https://github.com/getpaseo/paseo/pull/1658))
+- The right sidebar no longer gets stuck on mobile ([#1661](https://github.com/getpaseo/paseo/pull/1661))
+
 ## 0.1.98 - 2026-06-21
 
 ### Added

@@ -165,7 +165,7 @@ export const es: TranslationResources = {
     hints: {
       thinking: "Modo de pensamiento",
       model: "Cambiar modelo",
-      mode: "Cambiar modo de permiso",
+      mode: "Cambiar modo",
     },
   },
   agentStream: {
@@ -744,6 +744,9 @@ export const es: TranslationResources = {
         failedOpen: "No se pudo abrir el espacio de trabajo",
       },
       pr: {
+        actions: {
+          viewPullRequest: "Ver",
+        },
         sections: {
           checks: "cheques",
           reviews: "Reseñas",
@@ -1472,6 +1475,8 @@ export const es: TranslationResources = {
           en: "English",
           es: "Español",
           fr: "Français",
+          ja: "日本語",
+          ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "中文",
         },
@@ -1483,6 +1488,22 @@ export const es: TranslationResources = {
       playTest: "Prueba de juego",
       playing: "Jugando...",
       playbackFailed: "Error de reproducción:{{message}}",
+      app: {
+        title: "App diagnostic",
+        rowTitle: "App diagnostic",
+        rowHint: "Collect connection, daemon, provider, desktop, and log details",
+        run: "Run",
+        running: "Running diagnostic...",
+        copyLabel: "diagnostic",
+        copyAccessibility: "Copy diagnostic",
+        copyFailed: "Failed to copy diagnostic",
+        refreshAccessibility: "Refresh diagnostic",
+        refreshingAccessibility: "Refreshing diagnostic",
+        progress: {
+          client: "Client",
+          desktop: "Desktop",
+        },
+      },
     },
     about: {
       title: "Acerca de",
@@ -1602,6 +1623,7 @@ export const es: TranslationResources = {
         toggleFocusMode: "Alternar modo de enfoque",
         cycleTheme: "Tema del ciclo",
         focusMessageInput: "Entrada de mensaje de enfoque",
+        cycleAgentMode: "Alternar modo del agente",
         toggleVoiceMode: "Alternar modo de voz",
         startStopDictation: "Iniciar dictado/stop",
         interruptAgent: "agente de interrupción",

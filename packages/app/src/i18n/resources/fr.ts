@@ -166,7 +166,7 @@ export const fr: TranslationResources = {
     hints: {
       thinking: "Mode réflexion",
       model: "Changer de modèle",
-      mode: "Changer le mode d'autorisation",
+      mode: "Changer de mode",
     },
   },
   agentStream: {
@@ -743,6 +743,9 @@ export const fr: TranslationResources = {
         failedOpen: "Échec de l'ouverture de l'espace de travail",
       },
       pr: {
+        actions: {
+          viewPullRequest: "Voir",
+        },
         sections: {
           checks: "Chèques",
           reviews: "Avis",
@@ -1475,6 +1478,8 @@ export const fr: TranslationResources = {
           en: "English",
           es: "Español",
           fr: "Français",
+          ja: "日本語",
+          ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "中文",
         },
@@ -1486,6 +1491,22 @@ export const fr: TranslationResources = {
       playTest: "Jouer à l'essai",
       playing: "Jouant...",
       playbackFailed: "Échec de la lecture:{{message}}",
+      app: {
+        title: "App diagnostic",
+        rowTitle: "App diagnostic",
+        rowHint: "Collect connection, daemon, provider, desktop, and log details",
+        run: "Run",
+        running: "Running diagnostic...",
+        copyLabel: "diagnostic",
+        copyAccessibility: "Copy diagnostic",
+        copyFailed: "Failed to copy diagnostic",
+        refreshAccessibility: "Refresh diagnostic",
+        refreshingAccessibility: "Refreshing diagnostic",
+        progress: {
+          client: "Client",
+          desktop: "Desktop",
+        },
+      },
     },
     about: {
       title: "À propos",
@@ -1606,6 +1627,7 @@ export const fr: TranslationResources = {
         toggleFocusMode: "Basculer le mode de mise au point",
         cycleTheme: "Thème du cycle",
         focusMessageInput: "Saisie du message de focus",
+        cycleAgentMode: "Parcourir les modes de l'agent",
         toggleVoiceMode: "Changer le mode vocal",
         startStopDictation: "Démarrer la dictée/stop",
         interruptAgent: "Agent d'interruption",
