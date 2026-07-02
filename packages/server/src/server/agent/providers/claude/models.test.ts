@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { ClaudeAgentClient } from "./agent.js";
-import { getClaudeModels, normalizeClaudeRuntimeModelId } from "./models.js";
+import { findClaudeModel, getClaudeModels, normalizeClaudeRuntimeModelId } from "./models.js";
 
 const createdClaudeConfigDirs: string[] = [];
 
@@ -38,6 +38,7 @@ describe("getClaudeModels", () => {
       "claude-fable-5",
       "claude-opus-4-8[1m]",
       "claude-opus-4-8",
+      "claude-sonnet-5",
       "claude-opus-4-7[1m]",
       "claude-opus-4-7",
       "claude-opus-4-6[1m]",
@@ -53,6 +54,22 @@ describe("getClaudeModels", () => {
     const defaults = models.filter((m) => m.isDefault);
     expect(defaults).toHaveLength(1);
     expect(defaults[0].id).toBe("claude-opus-4-8");
+  });
+
+  it("keeps fixed context windows on the model entries", () => {
+    const modelsById = new Map(getClaudeModels().map((model) => [model.id, model]));
+
+    expect(modelsById.get("claude-fable-5")?.contextWindowMaxTokens).toBe(1_000_000);
+    expect(modelsById.get("claude-opus-4-8[1m]")?.contextWindowMaxTokens).toBe(1_000_000);
+    expect(modelsById.get("claude-opus-4-8")?.contextWindowMaxTokens).toBe(200_000);
+    expect(modelsById.get("claude-sonnet-5")?.contextWindowMaxTokens).toBe(1_000_000);
+    expect(modelsById.get("claude-sonnet-4-6")?.contextWindowMaxTokens).toBe(200_000);
+    expect(modelsById.get("claude-haiku-4-5")?.contextWindowMaxTokens).toBe(200_000);
+  });
+
+  it("finds models through the runtime normalizer", () => {
+    expect(findClaudeModel("claude-sonnet-5-20260101")?.id).toBe("claude-sonnet-5");
+    expect(findClaudeModel("claude-sonnet-5[1m]")?.contextWindowMaxTokens).toBe(1_000_000);
   });
 
   it("returns fresh copies each call", () => {
@@ -78,7 +95,11 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
     const client = new ClaudeAgentClient({ logger: createTestLogger() });
 
-    const { models } = await client.fetchCatalog({ cwd: os.tmpdir(), force: true });
+    const { models } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: os.tmpdir(),
+      force: true,
+    });
 
     expect(models).toEqual([
       ...getClaudeModels(),
@@ -127,7 +148,11 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
     const client = new ClaudeAgentClient({ logger: createTestLogger() });
 
-    const { models } = await client.fetchCatalog({ cwd: os.tmpdir(), force: true });
+    const { models } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: os.tmpdir(),
+      force: true,
+    });
 
     expect(models).toEqual(getClaudeModels());
   });
@@ -137,7 +162,11 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
     const client = new ClaudeAgentClient({ logger: createTestLogger() });
 
-    const { models } = await client.fetchCatalog({ cwd: os.tmpdir(), force: true });
+    const { models } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: os.tmpdir(),
+      force: true,
+    });
 
     expect(models).toEqual(getClaudeModels());
   });
@@ -153,7 +182,11 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
     const client = new ClaudeAgentClient({ logger: createTestLogger() });
 
-    const { models } = await client.fetchCatalog({ cwd: os.tmpdir(), force: true });
+    const { models } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: os.tmpdir(),
+      force: true,
+    });
 
     expect(models).toEqual(getClaudeModels());
   });
@@ -169,7 +202,11 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     vi.stubEnv("CLAUDE_CONFIG_DIR", configDir);
     const client = new ClaudeAgentClient({ logger: createTestLogger() });
 
-    const { models } = await client.fetchCatalog({ cwd: os.tmpdir(), force: true });
+    const { models } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: os.tmpdir(),
+      force: true,
+    });
 
     expect(models.map((model) => model.id)).toEqual([
       ...getClaudeModels().map((model) => model.id),
@@ -183,12 +220,14 @@ describe("normalizeClaudeRuntimeModelId", () => {
     expect(normalizeClaudeRuntimeModelId("claude-fable-5")).toBe("claude-fable-5");
     expect(normalizeClaudeRuntimeModelId("claude-opus-4-6")).toBe("claude-opus-4-6");
     expect(normalizeClaudeRuntimeModelId("claude-opus-4-6[1m]")).toBe("claude-opus-4-6[1m]");
+    expect(normalizeClaudeRuntimeModelId("claude-sonnet-5")).toBe("claude-sonnet-5");
     expect(normalizeClaudeRuntimeModelId("claude-sonnet-4-6")).toBe("claude-sonnet-4-6");
     expect(normalizeClaudeRuntimeModelId("claude-haiku-4-5")).toBe("claude-haiku-4-5");
   });
 
   it("normalizes dated model IDs to base model", () => {
     expect(normalizeClaudeRuntimeModelId("claude-fable-5-20260301")).toBe("claude-fable-5");
+    expect(normalizeClaudeRuntimeModelId("claude-sonnet-5-20260101")).toBe("claude-sonnet-5");
     expect(normalizeClaudeRuntimeModelId("claude-opus-4-6-20260101")).toBe("claude-opus-4-6");
     expect(normalizeClaudeRuntimeModelId("claude-sonnet-4-6-20260101")).toBe("claude-sonnet-4-6");
     expect(normalizeClaudeRuntimeModelId("claude-haiku-4-5-20251001")).toBe("claude-haiku-4-5");
@@ -196,6 +235,10 @@ describe("normalizeClaudeRuntimeModelId", () => {
 
   it("preserves [1m] suffix from runtime model strings", () => {
     expect(normalizeClaudeRuntimeModelId("claude-opus-4-6[1m]")).toBe("claude-opus-4-6[1m]");
+  });
+
+  it("strips [1m] suffix for natively-1M models", () => {
+    expect(normalizeClaudeRuntimeModelId("claude-sonnet-5[1m]")).toBe("claude-sonnet-5");
   });
 
   it("returns null for empty/null/undefined", () => {

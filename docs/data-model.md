@@ -150,6 +150,7 @@ Single file, validated with `PersistedConfigSchema`.
   daemon: {
     listen: "127.0.0.1:6767",
     hostnames: true | string[],   // legacy alias `allowedHosts` is migrated on load
+    trustedProxies: true | string[], // defaults to ["loopback"]; Express proxy names/CIDRs
     mcp: { enabled: boolean, injectIntoAgents: boolean },
     appendSystemPrompt: string,    // appended to supported provider system/developer prompts
     cors: { allowedOrigins: string[] },
@@ -163,7 +164,12 @@ Single file, validated with `PersistedConfigSchema`.
     root?: string            // optional root for new worktrees; defaults to $PASEO_HOME/worktrees
   },
   providers: {
-    openai: { voice: { apiKey: string, baseUrl: string } },
+    openai: {
+      apiKey?: string,
+      baseUrl?: string,
+      stt?: { apiKey?: string, baseUrl?: string },
+      tts?: { apiKey?: string, baseUrl?: string }
+    },
     local: { modelsDir: string }
   },
   agents: {
@@ -201,13 +207,17 @@ Set these to select OpenAI instead of local speech:
 | `PASEO_DICTATION_STT_PROVIDER` | Composer dictation STT provider |
 | `PASEO_VOICE_TTS_PROVIDER`     | Voice mode TTS provider         |
 
-OpenAI voice can be configured under `providers.openai`:
+OpenAI speech can be configured under `providers.openai`. STT and TTS resolve independently, so they can point at different endpoints:
 
 ```json
 {
   "providers": {
     "openai": {
-      "voice": {
+      "stt": {
+        "apiKey": "sk-...",
+        "baseUrl": "https://stt.example.com/v1"
+      },
+      "tts": {
         "apiKey": "sk-...",
         "baseUrl": "https://api.openai.com/v1"
       }
@@ -216,7 +226,7 @@ OpenAI voice can be configured under `providers.openai`:
 }
 ```
 
-`providers.openai.voice.apiKey` and `providers.openai.voice.baseUrl` apply only to Paseo OpenAI voice features.
+`providers.openai.stt` is used for both composer dictation and voice mode speech-to-text; `providers.openai.tts` is used for voice mode text-to-speech. The equivalent env vars are `OPENAI_STT_API_KEY`/`OPENAI_STT_BASE_URL` and `OPENAI_TTS_API_KEY`/`OPENAI_TTS_BASE_URL`. Each feature falls back to `providers.openai.apiKey`/`providers.openai.baseUrl`, then `OPENAI_API_KEY`/`OPENAI_BASE_URL`, when its own fields are unset. These settings apply only to Paseo OpenAI speech features, not to Codex or other OpenAI-backed tools.
 
 Paseo uses these paths under the configured OpenAI base URL:
 

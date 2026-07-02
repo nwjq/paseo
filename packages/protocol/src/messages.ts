@@ -242,6 +242,7 @@ const AgentModelDefinitionSchema: z.ZodType<AgentModelDefinition> = z
     label: z.string(),
     description: z.string().optional(),
     isDefault: z.boolean().optional(),
+    contextWindowMaxTokens: z.number().optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
     thinkingOptions: z.array(AgentSelectOptionSchema).optional(),
     defaultThinkingOptionId: z.string().optional(),
@@ -843,12 +844,18 @@ export const GitHubIssueAttachmentSchema = z.object({
   body: z.string().nullable().optional(),
 });
 
-export const TextAttachmentSchema = z.object({
-  type: z.literal("text"),
-  mimeType: z.literal("text/plain"),
-  title: z.string().nullable().optional(),
-  text: z.string(),
-});
+export const TextAttachmentSchema = z
+  .object({
+    type: z.literal("text"),
+    mimeType: z.literal("text/plain"),
+    contextKind: z.string().optional(),
+    title: z.string().nullable().optional(),
+    text: z.string(),
+  })
+  .transform(({ contextKind, ...attachment }) => ({
+    ...attachment,
+    ...(contextKind === "chat_history" ? { contextKind } : {}),
+  }));
 
 export const ReviewAttachmentContextLineSchema = z.object({
   oldLineNumber: z.number().int().positive().nullable(),
@@ -1252,6 +1259,11 @@ export const ShutdownServerRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const DaemonUpdateRequestMessageSchema = z.object({
+  type: z.literal("daemon.update.request"),
+  requestId: z.string(),
+});
+
 export const AgentTimelineCursorSchema = z.object({
   epoch: z.string(),
   seq: z.number().int().nonnegative(),
@@ -1267,6 +1279,13 @@ export const FetchAgentTimelineRequestMessageSchema = z.object({
   limit: z.number().int().nonnegative().optional(),
   // Default should be projected for app timeline loading.
   projection: z.enum(["projected", "canonical"]).optional(),
+});
+
+export const AgentForkContextRequestMessageSchema = z.object({
+  type: z.literal("agent.fork_context.request"),
+  agentId: z.string(),
+  boundaryMessageId: z.string().optional(),
+  requestId: z.string(),
 });
 
 export const SetAgentModeRequestMessageSchema = z.object({
@@ -2053,7 +2072,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CancelAgentRequestMessageSchema,
   ShutdownServerRequestMessageSchema,
   RestartServerRequestMessageSchema,
+  DaemonUpdateRequestMessageSchema,
   FetchAgentTimelineRequestMessageSchema,
+  AgentForkContextRequestMessageSchema,
   SetAgentModeRequestMessageSchema,
   SetAgentModelRequestMessageSchema,
   SetAgentThinkingRequestMessageSchema,
@@ -2327,6 +2348,10 @@ export const ServerInfoStatusPayloadSchema = z
         agentDetach: z.boolean().optional(),
         // COMPAT(daemonDiagnostics): added in v0.1.100, remove gate after 2026-12-25 once daemon floor >= v0.1.100.
         daemonDiagnostics: z.boolean().optional(),
+        // COMPAT(daemonSelfUpdate): added in v0.1.93, remove gate after 2026-12-13.
+        daemonSelfUpdate: z.boolean().optional(),
+        // COMPAT(agentForkContext): added in v0.1.102, remove gate after 2026-12-28.
+        agentForkContext: z.boolean().optional(),
       })
       .optional(),
   })
@@ -2914,6 +2939,18 @@ export const FetchAgentTimelineResponseMessageSchema = z.object({
     hasOlder: z.boolean(),
     hasNewer: z.boolean(),
     entries: z.array(AgentTimelineEntryPayloadSchema),
+    error: z.string().nullable(),
+  }),
+});
+
+export const AgentForkContextResponseMessageSchema = z.object({
+  type: z.literal("agent.fork_context.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    attachment: TextAttachmentSchema.nullable(),
+    itemCount: z.number().int().nonnegative(),
+    boundaryMessageId: z.string().nullable(),
     error: z.string().nullable(),
   }),
 });
@@ -4093,6 +4130,29 @@ export const TerminalAttentionRequiredSchema = z.object({
   }),
 });
 
+export const DaemonUpdateResponseSchema = z.object({
+  type: z.literal("daemon.update.response"),
+  payload: z.object({
+    requestId: z.string(),
+    success: z.boolean(),
+    error: z.string().nullable(),
+    previousVersion: z.string().nullable(),
+    newVersion: z.string().nullable(),
+  }),
+});
+
+export type DaemonUpdateResponse = z.infer<typeof DaemonUpdateResponseSchema>;
+
+export const DaemonUpdateProgressMessageSchema = z.object({
+  type: z.literal("daemon.update.progress"),
+  payload: z.object({
+    requestId: z.string(),
+    phase: z.enum(["starting", "downloading", "installing", "complete"]),
+  }),
+});
+
+export type DaemonUpdateProgressMessage = z.infer<typeof DaemonUpdateProgressMessageSchema>;
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
@@ -4127,6 +4187,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ArchiveWorkspaceResponseMessageSchema,
   FetchAgentResponseMessageSchema,
   FetchAgentTimelineResponseMessageSchema,
+  AgentForkContextResponseMessageSchema,
   CancelAgentResponseMessageSchema,
   ClearAgentAttentionResponseMessageSchema,
   WorkspaceCreateResponseSchema,
@@ -4228,6 +4289,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   LoopInspectResponseSchema,
   LoopLogsResponseSchema,
   LoopStopResponseSchema,
+  DaemonUpdateProgressMessageSchema,
+  DaemonUpdateResponseSchema,
 ]);
 
 export type SessionOutboundMessage = z.infer<typeof SessionOutboundMessageSchema>;
@@ -4287,6 +4350,7 @@ export type FetchAgentResponseMessage = z.infer<typeof FetchAgentResponseMessage
 export type FetchAgentTimelineResponseMessage = z.infer<
   typeof FetchAgentTimelineResponseMessageSchema
 >;
+export type AgentForkContextResponseMessage = z.infer<typeof AgentForkContextResponseMessageSchema>;
 export type CancelAgentResponseMessage = z.infer<typeof CancelAgentResponseMessageSchema>;
 export type SendAgentMessageResponseMessage = z.infer<typeof SendAgentMessageResponseMessageSchema>;
 export type SetVoiceModeResponseMessage = z.infer<typeof SetVoiceModeResponseMessageSchema>;
@@ -4377,6 +4441,7 @@ export type FetchRecentProviderSessionsRequestMessage = z.infer<
 >;
 export type FetchWorkspacesRequestMessage = z.infer<typeof FetchWorkspacesRequestMessageSchema>;
 export type FetchAgentRequestMessage = z.infer<typeof FetchAgentRequestMessageSchema>;
+export type AgentForkContextRequestMessage = z.infer<typeof AgentForkContextRequestMessageSchema>;
 export type SendAgentMessageRequest = z.infer<typeof SendAgentMessageRequestSchema>;
 export type WaitForFinishRequest = z.infer<typeof WaitForFinishRequestSchema>;
 export type DictationStreamStartMessage = z.infer<typeof DictationStreamStartMessageSchema>;

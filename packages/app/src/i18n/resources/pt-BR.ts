@@ -248,6 +248,12 @@ export const ptBR: TranslationResources = {
       copyCode: "Copiar código",
       copyTurn: "Copiar turno",
       copyMessage: "Copiar mensagem",
+      forkMenu: "Bifurcar mensagem",
+      forkInNewTab: "Bifurcar em uma nova aba",
+      forkInNewWorkspace: "Bifurcar em um novo workspace",
+      forkUnavailable: "Atualize o host para usar isto.",
+      forkMissingWorkspace: "Este agente não está em um workspace.",
+      forkFailed: "Falha ao bifurcar o chat",
       openFile: "Abrir arquivo",
       copied: "Copiado",
     },
@@ -950,8 +956,17 @@ export const ptBR: TranslationResources = {
         upToDate: "O app está atualizado.",
         upToDateWithLastChecked: "Atualizado. Última verificação às {{time}}.",
         pending: "Avisaremos quando a atualização estiver pronta.",
+        pendingWithLastChecked:
+          "Avisaremos quando a atualização estiver pronta. Última verificação às {{time}}.",
+        pendingWithVersion: "Atualização encontrada: {{version}}. Baixando...",
+        pendingWithVersionAndLastChecked:
+          "Atualização encontrada: {{version}}. Baixando... Última verificação às {{time}}.",
         availableWithVersion: "Atualização pronta: {{version}}",
+        availableWithVersionAndLastChecked:
+          "Atualização pronta: {{version}}. Última verificação às {{time}}.",
         available: "Há uma atualização do app pronta para instalar.",
+        availableWithLastChecked:
+          "Há uma atualização do app pronta para instalar. Última verificação às {{time}}.",
         installed: "Atualização do app instalada. Reinicialização obrigatória.",
         failed: "Falha ao atualizar o app.",
         idle: "O status de atualização ainda não foi verificado.",
@@ -1073,6 +1088,7 @@ export const ptBR: TranslationResources = {
   projectPicker: {
     placeholder: "Digite um caminho de diretório...",
     opening: "Abrindo projeto...",
+    searching: "Buscando...",
     empty: "Comece digitando um caminho",
     errors: {
       directory_not_found: "Diretório não encontrado.",
@@ -1770,6 +1786,31 @@ export const ptBR: TranslationResources = {
           requestFailedMessage:
             "Falha ao enviar a solicitação de reinício. O Paseo reconecta automaticamente. Tente novamente quando o host aparecer como online.",
           dialogFailedMessage: "Não foi possível abrir o diálogo de confirmação de reinício.",
+        },
+        update: {
+          title: "Atualizar daemon",
+          hint: "Atualiza o daemon para a versão mais recente e o reinicia",
+          confirm: "Atualizar",
+          confirmTitle: "Atualizar {{name}}",
+          confirmMessage:
+            "Isso vai atualizar o daemon para a versão mais recente e reiniciá-lo. Agentes em execução serão interrompidos brevemente.",
+          updating: "Atualizando...",
+          phaseStarting: "Preparando atualização...",
+          phaseDownloading: "Baixando pacotes...",
+          phaseInstalling: "Instalando...",
+          phaseComplete: "Atualização concluída, reiniciando...",
+          unableToReconnectTitle: "Não foi possível reconectar",
+          unableToReconnectMessage:
+            "{{name}} não voltou a ficar online após a atualização. Verifique se o daemon reiniciou.",
+          unavailableTitle: "Host indisponível",
+          unavailableMessage:
+            "Este host não está conectado. Aguarde até ele ficar online antes de atualizar.",
+          offlineTitle: "Host offline",
+          offlineMessage:
+            "Este host está offline. Aguarde até ele voltar a ficar online antes de atualizar.",
+          requestFailedTitle: "Falha na atualização",
+          requestFailedMessage: "Falha ao atualizar o daemon: {{error}}",
+          dialogFailedMessage: "Não foi possível abrir o diálogo de confirmação da atualização.",
         },
         dangerZone: "Zona de perigo",
         remove: {

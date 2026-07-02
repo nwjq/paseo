@@ -406,12 +406,17 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
         resolveBinary: async () => "/test/claude/bin",
         configDir: emptyConfigDir,
       });
-      const { models } = await client.fetchCatalog({ cwd: "/tmp/claude-models", force: false });
+      const { models } = await client.fetchCatalog({
+        scope: "workspace",
+        cwd: "/tmp/claude-models",
+        force: false,
+      });
 
       expect(models.map((m) => m.id)).toEqual([
         "claude-fable-5",
         "claude-opus-4-8[1m]",
         "claude-opus-4-8",
+        "claude-sonnet-5",
         "claude-opus-4-7[1m]",
         "claude-opus-4-7",
         "claude-opus-4-6[1m]",
@@ -441,7 +446,11 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
         resolveBinary: async () => "/test/claude/bin",
         configDir: emptyConfigDir,
       });
-      const { models } = await client.fetchCatalog({ cwd: "/tmp/claude-models", force: false });
+      const { models } = await client.fetchCatalog({
+        scope: "workspace",
+        cwd: "/tmp/claude-models",
+        force: false,
+      });
       const getThinkingIds = (modelId: string) => {
         return models.find((model) => model.id === modelId)?.thinkingOptions?.map(({ id }) => id);
       };
@@ -449,6 +458,8 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       expect(getThinkingIds("claude-fable-5")).toContain("ultracode");
       expect(getThinkingIds("claude-opus-4-8[1m]")).toContain("ultracode");
       expect(getThinkingIds("claude-opus-4-8")).toContain("ultracode");
+      expect(getThinkingIds("claude-sonnet-5")).toContain("xhigh");
+      expect(getThinkingIds("claude-sonnet-5")).not.toContain("ultracode");
       expect(getThinkingIds("claude-opus-4-7")).not.toContain("ultracode");
       expect(getThinkingIds("claude-sonnet-4-6")).not.toContain("ultracode");
     } finally {
@@ -1874,6 +1885,45 @@ describe("ClaudeAgentSession context window usage", () => {
             contextWindowMaxTokens: 200_000,
             contextWindowUsedTokens: 150,
           },
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("selected native-1M Claude models seed active context window usage with 1M max tokens", async () => {
+    const session = await createSessionForTurns(
+      [
+        [
+          createInitMessage(),
+          createMessageStartEvent(),
+          createSuccessResult({ modelUsage: undefined }),
+        ],
+      ],
+      { model: "claude-sonnet-5" },
+    );
+
+    try {
+      const events = await collectStreamEvents(session);
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "usage_updated",
+          provider: "claude",
+          usage: {
+            contextWindowMaxTokens: 1_000_000,
+            contextWindowUsedTokens: 150,
+          },
+        }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "turn_completed",
+          provider: "claude",
+          usage: expect.objectContaining({
+            contextWindowMaxTokens: 1_000_000,
+          }),
         }),
       );
     } finally {

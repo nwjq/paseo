@@ -244,6 +244,12 @@ export const en = {
       copyCode: "Copy code",
       copyTurn: "Copy turn",
       copyMessage: "Copy message",
+      forkMenu: "Fork chat",
+      forkInNewTab: "Fork in a new tab",
+      forkInNewWorkspace: "Fork in a new workspace",
+      forkUnavailable: "Update the host to use this.",
+      forkMissingWorkspace: "This agent is not in a workspace.",
+      forkFailed: "Failed to fork chat",
       openFile: "Open file",
       copied: "Copied",
     },
@@ -939,8 +945,15 @@ export const en = {
         upToDate: "App is up to date.",
         upToDateWithLastChecked: "Up to date. Last checked at {{time}}.",
         pending: "We'll let you know when the update is ready.",
+        pendingWithLastChecked:
+          "We'll let you know when the update is ready. Last checked at {{time}}.",
+        pendingWithVersion: "Update found: {{version}}. Downloading...",
+        pendingWithVersionAndLastChecked:
+          "Update found: {{version}}. Downloading... Last checked at {{time}}.",
         availableWithVersion: "Update ready: {{version}}",
+        availableWithVersionAndLastChecked: "Update ready: {{version}}. Last checked at {{time}}.",
         available: "An app update is ready to install.",
+        availableWithLastChecked: "An app update is ready to install. Last checked at {{time}}.",
         installed: "App update installed. Restart required.",
         failed: "Failed to update app.",
         idle: "Update status has not been checked yet.",
@@ -1060,6 +1073,7 @@ export const en = {
   projectPicker: {
     placeholder: "Type a directory path...",
     opening: "Opening project...",
+    searching: "Searching...",
     empty: "Start typing a path",
     errors: {
       directory_not_found: "Directory not found.",
@@ -1752,6 +1766,30 @@ export const en = {
           requestFailedMessage:
             "Failed to send the restart request. Paseo reconnects automatically-try again once the host shows as online.",
           dialogFailedMessage: "Unable to open the restart confirmation dialog.",
+        },
+        update: {
+          title: "Update daemon",
+          hint: "Update the daemon to the latest version and restart it",
+          confirm: "Update",
+          confirmTitle: "Update {{name}}",
+          confirmMessage:
+            "This will update the daemon to the latest version and restart it. Running agents will be briefly interrupted.",
+          updating: "Updating...",
+          phaseStarting: "Preparing update...",
+          phaseDownloading: "Downloading packages...",
+          phaseInstalling: "Installing...",
+          phaseComplete: "Update complete, restarting...",
+          unableToReconnectTitle: "Unable to reconnect",
+          unableToReconnectMessage:
+            "{{name}} did not come back online after updating. Please verify the daemon restarted.",
+          unavailableTitle: "Host unavailable",
+          unavailableMessage:
+            "This host is not connected. Wait for it to come online before updating.",
+          offlineTitle: "Host offline",
+          offlineMessage: "This host is offline. Wait until it is back online before updating.",
+          requestFailedTitle: "Update failed",
+          requestFailedMessage: "Failed to update the daemon: {{error}}",
+          dialogFailedMessage: "Unable to open the update confirmation dialog.",
         },
         dangerZone: "Danger zone",
         remove: {

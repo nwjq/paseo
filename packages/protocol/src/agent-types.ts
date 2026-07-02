@@ -77,6 +77,7 @@ export interface AgentModelDefinition {
   label: string;
   description?: string;
   isDefault?: boolean;
+  contextWindowMaxTokens?: number;
   metadata?: AgentMetadata;
   thinkingOptions?: AgentSelectOption[];
   defaultThinkingOptionId?: string;

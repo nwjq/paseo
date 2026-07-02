@@ -42,10 +42,15 @@ function makeSubsystem(overrides: {
   getWebSocketRuntimeMetrics?: () => DaemonWebSocketRuntimeDiagnosticSnapshot | null;
 }) {
   const emitted: SessionOutboundMessage[] = [];
-  const host: DaemonSessionHost = { emit: (msg) => emitted.push(msg) };
+  const restartIntents: Parameters<DaemonSessionHost["emitLifecycleIntent"]>[0][] = [];
+  const host: DaemonSessionHost = {
+    emit: (msg) => emitted.push(msg),
+    emitLifecycleIntent: (intent) => restartIntents.push(intent),
+  };
   const paseoHome = makeHome();
   const subsystem = new DaemonSession({
     host,
+    clientId: "client-1",
     paseoHome,
     serverId: overrides.serverId,
     daemonVersion: overrides.daemonVersion,
@@ -57,7 +62,7 @@ function makeSubsystem(overrides: {
     getWebSocketRuntimeMetrics: overrides.getWebSocketRuntimeMetrics,
     logger: pino({ level: "silent" }),
   });
-  return { subsystem, emitted, paseoHome };
+  return { subsystem, emitted, paseoHome, restartIntents };
 }
 
 describe("DaemonSession", () => {
@@ -256,6 +261,14 @@ describe("DaemonSession", () => {
       getWebSocketRuntimeMetrics: () => ({
         collectedAt: "2026-01-02T03:04:05.000Z",
         windowMs: 30_000,
+        uptimeSeconds: 12.345,
+        memory: {
+          rss: 1024 * 1024 * 64,
+          heapTotal: 1024 * 1024 * 32,
+          heapUsed: 1024 * 1024 * 12,
+          external: 1024 * 1024 * 3,
+          arrayBuffers: 1024 * 512,
+        },
         final: false,
         sessions: {
           activeConnections: 2,
@@ -344,6 +357,10 @@ describe("DaemonSession", () => {
     }
     expect(message.payload.diagnostic).toContain("WebSocket runtime metrics");
     expect(message.payload.diagnostic).toContain("Collected at: 2026-01-02T03:04:05.000Z");
+    expect(message.payload.diagnostic).toContain("Process uptime: 12s");
+    expect(message.payload.diagnostic).toContain(
+      "Process memory: rss=64.0 MiB, heap=12.0 MiB / 32.0 MiB",
+    );
     expect(message.payload.diagnostic).toContain(
       "Sessions: active=2, externalKeys=3, reconnectGrace=1",
     );

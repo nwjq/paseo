@@ -188,6 +188,7 @@ export async function checkForAppUpdate({
       latestVersion: currentVersion,
       body: null,
       date: null,
+      errorMessage: null,
     };
   }
 

@@ -248,6 +248,12 @@ export const ja: TranslationResources = {
       copyCode: "コードをコピー",
       copyTurn: "ターンをコピー",
       copyMessage: "メッセージをコピー",
+      forkMenu: "メッセージをフォーク",
+      forkInNewTab: "新しいタブにフォーク",
+      forkInNewWorkspace: "新しいワークスペースにフォーク",
+      forkUnavailable: "これを使用するにはホストを更新してください。",
+      forkMissingWorkspace: "このエージェントはワークスペース内にありません。",
+      forkFailed: "チャットのフォークに失敗しました",
       openFile: "ファイルを開く",
       copied: "コピーしました",
     },
@@ -944,8 +950,15 @@ export const ja: TranslationResources = {
         upToDate: "アプリは最新です。",
         upToDateWithLastChecked: "最新の状態です。最終確認: {{time}}。",
         pending: "更新の準備ができたらお知らせします。",
+        pendingWithLastChecked: "更新の準備ができたらお知らせします。最終確認: {{time}}。",
+        pendingWithVersion: "更新が見つかりました: {{version}}。ダウンロード中...",
+        pendingWithVersionAndLastChecked:
+          "更新が見つかりました: {{version}}。ダウンロード中... 最終確認: {{time}}。",
         availableWithVersion: "更新の準備ができました: {{version}}",
+        availableWithVersionAndLastChecked:
+          "更新の準備ができました: {{version}}。最終確認: {{time}}。",
         available: "アプリの更新をインストールできます。",
+        availableWithLastChecked: "アプリの更新をインストールできます。最終確認: {{time}}。",
         installed: "アプリの更新がインストールされました。再起動が必要です。",
         failed: "アプリの更新に失敗しました。",
         idle: "更新ステータスはまだ確認されていません。",
@@ -1067,6 +1080,7 @@ export const ja: TranslationResources = {
   projectPicker: {
     placeholder: "ディレクトリパスを入力...",
     opening: "プロジェクトを開いています...",
+    searching: "検索中...",
     empty: "パスを入力してください",
     errors: {
       directory_not_found: "ディレクトリが見つかりません。",
@@ -1764,6 +1778,31 @@ export const ja: TranslationResources = {
           requestFailedMessage:
             "再起動リクエストの送信に失敗しました。Paseoは自動的に再接続します。ホストがオンラインになったら再試行してください。",
           dialogFailedMessage: "再起動確認ダイアログを開けませんでした。",
+        },
+        update: {
+          title: "デーモンを更新",
+          hint: "デーモンを最新バージョンに更新して再起動します",
+          confirm: "更新",
+          confirmTitle: "{{name}}を更新",
+          confirmMessage:
+            "これによりデーモンが最新バージョンに更新され、再起動されます。実行中のエージェントは一時的に中断されます。",
+          updating: "更新中...",
+          phaseStarting: "更新を準備中...",
+          phaseDownloading: "パッケージをダウンロード中...",
+          phaseInstalling: "インストール中...",
+          phaseComplete: "更新が完了しました。再起動中...",
+          unableToReconnectTitle: "再接続できません",
+          unableToReconnectMessage:
+            "{{name}}が更新後にオンラインに戻りませんでした。デーモンが再起動されたことを確認してください。",
+          unavailableTitle: "ホストが利用できません",
+          unavailableMessage:
+            "このホストは接続されていません。更新する前にオンラインになるまでお待ちください。",
+          offlineTitle: "ホストオフライン",
+          offlineMessage:
+            "このホストはオフラインです。オンラインに戻るまで待ってから更新してください。",
+          requestFailedTitle: "更新に失敗しました",
+          requestFailedMessage: "デーモンの更新に失敗しました: {{error}}",
+          dialogFailedMessage: "更新確認ダイアログを開けませんでした。",
         },
         dangerZone: "危険ゾーン",
         remove: {

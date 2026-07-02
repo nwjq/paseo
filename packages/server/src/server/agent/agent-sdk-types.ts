@@ -78,6 +78,7 @@ export interface AgentModelDefinition {
   label: string;
   description?: string;
   isDefault?: boolean;
+  contextWindowMaxTokens?: number;
   metadata?: AgentMetadata;
   thinkingOptions?: AgentSelectOption[];
   defaultThinkingOptionId?: string;
@@ -643,11 +644,18 @@ export interface AgentSession {
   } | null;
 }
 
-export interface FetchCatalogOptions {
-  cwd: string;
-  force: boolean;
-  timeoutMs?: number;
-}
+export type FetchCatalogOptions =
+  | {
+      scope: "global";
+      force: boolean;
+      timeoutMs?: number;
+    }
+  | {
+      scope: "workspace";
+      cwd: string;
+      force: boolean;
+      timeoutMs?: number;
+    };
 
 export interface ProviderCatalog {
   models: AgentModelDefinition[];
