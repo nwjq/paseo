@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.105-beta.1 - 2026-07-09
+
+### Fixed
+
+- Workspaces created from a repository subdirectory keep the correct working directory
+
 ## 0.1.104 - 2026-07-08
 
 ### Added
