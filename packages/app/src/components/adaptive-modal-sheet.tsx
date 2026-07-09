@@ -1,8 +1,8 @@
-import { forwardRef, useCallback, useEffect, useMemo } from "react";
+import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, Ref } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import type { TextInputProps } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -20,7 +20,9 @@ import {
   useIsolatedBottomSheetVisibility,
 } from "@/components/ui/isolated-bottom-sheet-modal";
 import { getCompactSheetSafeAreaPadding } from "@/components/adaptive-modal-sheet-layout";
+import { createControlGeometry } from "@/components/ui/control-geometry";
 import { isNative, isWeb } from "@/constants/platform";
+import { useWebScrollViewScrollbar } from "@/components/use-web-scrollbar";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 // Horizontal indent token shared by the sheet header (title, back arrow,
@@ -178,6 +180,11 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.sm,
   },
+  desktopScrollContainer: {
+    flexShrink: 1,
+    minHeight: 0,
+    position: "relative",
+  },
   desktopScroll: {
     flexShrink: 1,
     minHeight: 0,
@@ -214,7 +221,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   adaptiveInputOutline: {
-    outlineColor: theme.colors.accent,
+    ...createControlGeometry(theme).controlFocusRingColor,
   },
   adaptiveInputText: {
     color: theme.colors.foreground,
@@ -225,6 +232,7 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 const SEARCH_INPUT_STYLE = [styles.searchInput, isWeb && { outlineStyle: "none" }];
+const WEB_EXIT_DURATION_MS = 160;
 
 function SheetBackground({ style }: BottomSheetBackgroundProps) {
   const { theme } = useUnistyles();
@@ -442,6 +450,7 @@ export interface AdaptiveModalSheetProps {
   header: SheetHeader;
   visible: boolean;
   onClose: () => void;
+  onDismiss?: () => void;
   children: ReactNode;
   /** Sticky footer rendered below the scrollable content. */
   footer?: ReactNode;
@@ -451,12 +460,18 @@ export interface AdaptiveModalSheetProps {
   desktopMaxWidth?: number;
   scrollable?: boolean;
   presentation?: "push" | "replace";
+  /**
+   * Render the themed desktop-web scrollbar over the scroll area instead of the
+   * native browser scrollbar. No-op on native and on the mobile bottom sheet.
+   */
+  webScrollbar?: boolean;
 }
 
 export function AdaptiveModalSheet({
   header,
   visible,
   onClose,
+  onDismiss,
   children,
   footer,
   snapPoints,
@@ -464,11 +479,16 @@ export function AdaptiveModalSheet({
   desktopMaxWidth,
   scrollable = true,
   presentation,
+  webScrollbar = false,
 }: AdaptiveModalSheetProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
   const insets = useSafeAreaInsets();
+  const desktopScrollRef = useRef<ScrollView>(null);
+  const desktopScrollbar = useWebScrollViewScrollbar(desktopScrollRef, {
+    enabled: webScrollbar && !isMobile,
+  });
   const resolvedSnapPoints = useMemo(() => snapPoints ?? ["65%", "90%"], [snapPoints]);
   const compactSafeAreaPadding = useMemo(
     () =>
@@ -517,6 +537,20 @@ export function AdaptiveModalSheet({
     isEnabled: isMobile,
     onClose,
   });
+  const [shouldRenderWeb, setShouldRenderWeb] = useState(visible);
+  const [isWebClosing, setIsWebClosing] = useState(false);
+  const nativeModalDismissNotifiedRef = useRef(!visible);
+  const handleDismiss = useCallback(() => {
+    handleSheetDismiss();
+    onDismiss?.();
+  }, [handleSheetDismiss, onDismiss]);
+  const notifyNativeModalDismiss = useCallback(() => {
+    if (nativeModalDismissNotifiedRef.current) {
+      return;
+    }
+    nativeModalDismissNotifiedRef.current = true;
+    onDismiss?.();
+  }, [onDismiss]);
 
   const renderBackdrop = useCallback(
     (props: React.ComponentProps<typeof BottomSheetBackdrop>) => (
@@ -529,11 +563,52 @@ export function AdaptiveModalSheet({
     () => [styles.desktopCard, desktopMaxWidth != null && { maxWidth: desktopMaxWidth }],
     [desktopMaxWidth],
   );
+  const desktopOverlayStyle = useMemo(
+    () => [
+      styles.desktopOverlay,
+      isWeb && {
+        opacity: isWebClosing ? 0 : 1,
+        transitionDuration: `${WEB_EXIT_DURATION_MS}ms`,
+        transitionProperty: "opacity",
+        transitionTimingFunction: "ease",
+      },
+    ],
+    [isWebClosing],
+  );
 
   useEffect(() => {
     if (!isWeb || isMobile || !visible) return;
     return pushEscHandler(onClose);
   }, [visible, isMobile, onClose]);
+
+  useEffect(() => {
+    if (visible) {
+      nativeModalDismissNotifiedRef.current = false;
+    }
+  }, [visible]);
+
+  useEffect(() => {
+    if (!isWeb || isMobile) return;
+    if (visible) {
+      setShouldRenderWeb(true);
+      setIsWebClosing(false);
+      return;
+    }
+    if (!shouldRenderWeb) return;
+    setIsWebClosing(true);
+    const timeout = window.setTimeout(() => {
+      setShouldRenderWeb(false);
+      setIsWebClosing(false);
+      onDismiss?.();
+    }, WEB_EXIT_DURATION_MS);
+    return () => window.clearTimeout(timeout);
+  }, [visible, isMobile, onDismiss, shouldRenderWeb]);
+
+  useEffect(() => {
+    if (isWeb || isMobile || visible || Platform.OS !== "android") return;
+    const timeout = setTimeout(notifyNativeModalDismiss, 0);
+    return () => clearTimeout(timeout);
+  }, [visible, isMobile, notifyNativeModalDismiss]);
 
   if (isMobile) {
     return (
@@ -543,7 +618,7 @@ export function AdaptiveModalSheet({
         index={0}
         enableDynamicSizing={false}
         onChange={handleSheetChange}
-        onDismiss={handleSheetDismiss}
+        onDismiss={handleDismiss}
         backdropComponent={renderBackdrop}
         enablePanDownToClose
         backgroundComponent={SheetBackground}
@@ -574,13 +649,22 @@ export function AdaptiveModalSheet({
     <>
       <SheetHeaderView header={header} onClose={onClose} />
       {scrollable ? (
-        <ScrollView
-          style={styles.desktopScroll}
-          contentContainerStyle={styles.desktopContent}
-          keyboardShouldPersistTaps="handled"
-        >
-          {children}
-        </ScrollView>
+        <View style={styles.desktopScrollContainer}>
+          <ScrollView
+            ref={desktopScrollRef}
+            style={styles.desktopScroll}
+            contentContainerStyle={styles.desktopContent}
+            keyboardShouldPersistTaps="handled"
+            onLayout={desktopScrollbar.onLayout}
+            onScroll={desktopScrollbar.onScroll}
+            onContentSizeChange={desktopScrollbar.onContentSizeChange}
+            scrollEventThrottle={16}
+            showsVerticalScrollIndicator={!webScrollbar}
+          >
+            {children}
+          </ScrollView>
+          {desktopScrollbar.overlay}
+        </View>
       ) : (
         <View style={styles.desktopStaticContent}>{children}</View>
       )}
@@ -589,7 +673,7 @@ export function AdaptiveModalSheet({
   );
 
   const desktopContent = (
-    <View style={styles.desktopOverlay} testID={testID}>
+    <View style={desktopOverlayStyle} testID={testID}>
       <Pressable
         accessibilityLabel={t("common.actions.dismiss")}
         style={ABSOLUTE_FILL_STYLE}
@@ -601,7 +685,7 @@ export function AdaptiveModalSheet({
 
   // On web, use portal to overlay root for consistent stacking with toasts
   if (isWeb && typeof document !== "undefined") {
-    if (!visible) return null;
+    if (!shouldRenderWeb) return null;
     return createPortal(desktopContent, getOverlayRoot());
   }
 
@@ -611,6 +695,7 @@ export function AdaptiveModalSheet({
       animationType="fade"
       visible={visible}
       onRequestClose={onClose}
+      onDismiss={notifyNativeModalDismiss}
       hardwareAccelerated
     >
       {desktopContent}

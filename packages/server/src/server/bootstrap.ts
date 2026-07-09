@@ -118,11 +118,15 @@ import { FileBackedChatService } from "./chat/chat-service.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { LoopService } from "./loop-service.js";
 import { ScheduleService } from "./schedule/service.js";
-import { DaemonConfigStore } from "./daemon-config-store.js";
+import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
+import { BrowserToolsBroker } from "./browser-tools/broker.js";
+import { DaemonConfigBrowserToolsPolicy } from "./browser-tools/policy.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
 import { resolveWorkspaceIdForPath } from "./resolve-workspace-id-for-path.js";
 import {
+  archiveByScope,
   archivePersistedWorkspaceRecord,
+  killTerminalsForWorkspace,
   type ActiveWorkspaceRef,
 } from "./workspace-archive-service.js";
 import { setupAutoArchiveOnMerge } from "./auto-archive-on-merge/index.js";
@@ -137,7 +141,7 @@ import type { PushNotificationSender } from "./push/notifications.js";
 import { getOrCreateServerId } from "./server-id.js";
 import { resolveDaemonVersion } from "./daemon-version.js";
 import type { AgentClient, AgentProvider } from "./agent/agent-sdk-types.js";
-import type { TerminalProfile } from "@getpaseo/protocol/messages";
+import type { FirstAgentContext, TerminalProfile } from "@getpaseo/protocol/messages";
 import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
@@ -160,6 +164,14 @@ import {
   type DaemonAuthConfig,
 } from "./auth.js";
 import { createWebUiMiddleware } from "./web-ui.js";
+import { WorkspaceAutoName } from "./workspace-auto-name.js";
+import { createGitMutationService } from "./session/git-mutation/git-mutation-service.js";
+import { workspaceIdsOnCheckout } from "./workspace-directory.js";
+import { resolveFirstAgentPromptTitle } from "./agent/create-agent-title.js";
+import {
+  createAgentCommand,
+  type CreateAgentCommandDependencies,
+} from "./agent/create-agent/create.js";
 
 const MAX_MCP_DEBUG_BATCH_ITEMS = 10;
 const REDACTED_LOG_VALUE = "[redacted]";
@@ -330,6 +342,7 @@ export interface PaseoDaemonConfig {
   trustedProxies?: true | string[];
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
+  browserToolsEnabled?: boolean;
   autoArchiveAfterMerge?: boolean;
   enableTerminalAgentHooks?: boolean;
   appendSystemPrompt?: string;
@@ -383,6 +396,7 @@ export interface PaseoDaemon {
   terminalManager: TerminalManager;
   serviceProxy: ServiceProxySubsystem;
   scriptRuntimeStore: WorkspaceScriptRuntimeStore;
+  browserToolsBroker: BrowserToolsBroker;
   start(): Promise<void>;
   stop(): Promise<void>;
   getListenTarget(): ListenTarget | null;
@@ -429,6 +443,39 @@ function resolveExpressTrustProxySetting(config: PaseoDaemonConfig): true | stri
   return config.trustedProxies ?? ["loopback"];
 }
 
+function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDaemonConfig {
+  const providers: MutableDaemonConfig["providers"] = Object.fromEntries(
+    Object.entries(config.providerOverrides ?? {}).map(([providerId, override]) => {
+      const providerConfig: MutableDaemonConfig["providers"][string] = {};
+      if (override.enabled !== undefined) {
+        providerConfig.enabled = override.enabled;
+      }
+      if (override.additionalModels) {
+        providerConfig.additionalModels = override.additionalModels;
+      }
+      return [providerId, providerConfig];
+    }),
+  );
+
+  const initialConfig: MutableDaemonConfig = {
+    mcp: { injectIntoAgents: config.mcpInjectIntoAgents ?? true },
+    browserTools: { enabled: config.browserToolsEnabled ?? false },
+    providers,
+    metadataGeneration: {
+      providers: config.metadataGeneration?.providers ?? [],
+    },
+    autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
+    enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
+    appendSystemPrompt: config.appendSystemPrompt ?? "",
+  };
+
+  if (config.terminalProfiles !== undefined) {
+    initialConfig.terminalProfiles = config.terminalProfiles;
+  }
+
+  return initialConfig;
+}
+
 export async function createPaseoDaemon(
   config: PaseoDaemonConfig,
   rootLogger: Logger,
@@ -439,29 +486,11 @@ export async function createPaseoDaemon(
   const daemonVersion = resolveDaemonVersion(import.meta.url);
   const daemonConfigStore = new DaemonConfigStore(
     config.paseoHome,
-    {
-      mcp: { injectIntoAgents: config.mcpInjectIntoAgents ?? true },
-      providers: Object.fromEntries(
-        Object.entries(config.providerOverrides ?? {}).map(([providerId, override]) => [
-          providerId,
-          {
-            ...(override.enabled !== undefined ? { enabled: override.enabled } : {}),
-            ...(override.additionalModels ? { additionalModels: override.additionalModels } : {}),
-          },
-        ]),
-      ),
-      metadataGeneration: {
-        providers: config.metadataGeneration?.providers ?? [],
-      },
-      autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
-      enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
-      appendSystemPrompt: config.appendSystemPrompt ?? "",
-      ...(config.terminalProfiles !== undefined
-        ? { terminalProfiles: config.terminalProfiles }
-        : {}),
-    },
+    createInitialMutableDaemonConfig(config),
     logger,
   );
+  const browserToolsPolicy = new DaemonConfigBrowserToolsPolicy(daemonConfigStore);
+  const browserToolsBroker = new BrowserToolsBroker({});
 
   const serverId = getOrCreateServerId(config.paseoHome, { logger });
   const daemonKeyPair = await loadOrCreateDaemonKeyPair(config.paseoHome, logger);
@@ -779,41 +808,6 @@ export async function createPaseoDaemon(
     paseoHome: config.paseoHome,
     workspaceGitService,
   });
-  const loopService = new LoopService({
-    paseoHome: config.paseoHome,
-    logger,
-    agentManager,
-    providerSnapshotManager,
-  });
-  await loopService.initialize();
-  logger.info({ elapsed: elapsed() }, "Loop service initialized");
-  const scheduleService = new ScheduleService({
-    paseoHome: config.paseoHome,
-    logger,
-    agentManager,
-    agentStorage,
-    providerSnapshotManager,
-  });
-  await scheduleService.start();
-  agentManager.setAgentArchivedCallback(async (agentId) => {
-    try {
-      await scheduleService.deleteForAgent(agentId);
-    } catch (error) {
-      logger.warn({ err: error, agentId }, "Failed to delete schedules for archived agent");
-    }
-  });
-  logger.info({ elapsed: elapsed() }, "Schedule service initialized");
-  logger.info({ elapsed: elapsed() }, "Loading persisted agent registry");
-  const persistedRecords = await agentStorage.list();
-  logger.info(
-    { elapsed: elapsed() },
-    `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`,
-  );
-  logger.info(
-    "Voice mode configured for agent-scoped resume flow (no dedicated voice assistant provider)",
-  );
-  logger.info({ elapsed: elapsed() }, "Preparing voice and MCP runtime");
-
   const archiveWorkspaceRecordExternal = async (workspaceId: string) => {
     const sessions = wsServer?.listActiveSessions() ?? [];
     if (sessions.length > 0) {
@@ -833,11 +827,21 @@ export async function createPaseoDaemon(
   const findWorkspaceIdForCwdExternal = async (cwd: string): Promise<string | null> => {
     return resolveWorkspaceIdForPath(cwd, await workspaceRegistry.list());
   };
-  const ensureWorkspaceForCreateExternal = async (cwd: string): Promise<string> => {
+  const ensureWorkspaceForCreateExternal = async (
+    cwd: string,
+    firstAgentContext?: FirstAgentContext,
+  ): Promise<string> => {
     const workspace = await createLocalCheckoutWorkspace(
-      { cwd },
+      { cwd, title: resolveFirstAgentPromptTitle(firstAgentContext) },
       { projectRegistry, workspaceRegistry, workspaceGitService },
     );
+    if (firstAgentContext) {
+      workspaceAutoName.scheduleForDirectory({
+        workspaceId: workspace.workspaceId,
+        cwd: workspace.cwd,
+        firstAgentContext,
+      });
+    }
     return workspace.workspaceId;
   };
   const listActiveWorkspacesExternal = async (): Promise<ActiveWorkspaceRef[]> => {
@@ -870,9 +874,38 @@ export async function createPaseoDaemon(
       ),
     );
   };
+  const ensureWorkspaceForCreateAndBroadcastExternal = async (
+    cwd: string,
+    firstAgentContext?: FirstAgentContext,
+  ): Promise<string> => {
+    const workspaceId = await ensureWorkspaceForCreateExternal(cwd, firstAgentContext);
+    await emitWorkspaceUpdatesExternal([workspaceId]);
+    return workspaceId;
+  };
+  const emitWorkspaceUpdateForCwdExternal = async (cwd: string) => {
+    const workspaceIds = workspaceIdsOnCheckout(await workspaceRegistry.list(), cwd);
+    await emitWorkspaceUpdatesExternal(workspaceIds);
+  };
   const emitExternalSessionMessage = (message: SessionOutboundMessage) => {
     wsServer?.broadcast(wrapSessionMessage(message));
   };
+  const workspaceAutoName = new WorkspaceAutoName({
+    agentManager,
+    workspaceRegistry,
+    workspaceGitService,
+    providerSnapshotManager,
+    readDaemonConfig: () => ({ metadataGeneration: daemonConfigStore.get().metadataGeneration }),
+    gitMutation: createGitMutationService({
+      workspaceGitService,
+      github,
+      logger,
+    }),
+    emitWorkspaceUpdateForCwd: emitWorkspaceUpdateForCwdExternal,
+    emitWorkspaceUpdateForWorkspaceId: async (workspaceId) => {
+      await emitWorkspaceUpdatesExternal([workspaceId]);
+    },
+    logger,
+  });
 
   setupAutoArchiveOnMerge({
     paseoHome: config.paseoHome,
@@ -920,6 +953,8 @@ export async function createPaseoDaemon(
               .map((session) => session.warmWorkspaceGitDataForWorkspace(workspace)) ?? [],
           );
         },
+        autoNameWorkspaceBranchForFirstAgent: (autoNameInput) =>
+          workspaceAutoName.scheduleForWorktree(autoNameInput),
         emitWorkspaceUpdateForWorkspaceId: async (workspaceId) => {
           await emitWorkspaceUpdatesExternal([workspaceId]);
         },
@@ -940,6 +975,119 @@ export async function createPaseoDaemon(
     );
   };
 
+  const createAgentCommandDependencies: CreateAgentCommandDependencies = {
+    agentManager,
+    agentStorage,
+    logger,
+    paseoHome: config.paseoHome,
+    worktreesRoot: config.worktreesRoot,
+    terminalManager,
+    providerSnapshotManager,
+    createPaseoWorktree: createPaseoWorktreeForTools,
+    ensureWorkspaceForCreate: ensureWorkspaceForCreateAndBroadcastExternal,
+  };
+  const createAgent = (input: Parameters<typeof createAgentCommand>[1]) =>
+    createAgentCommand(createAgentCommandDependencies, input);
+
+  const loopService = new LoopService({
+    paseoHome: config.paseoHome,
+    logger,
+    agentManager,
+    createAgent,
+    ensureWorkspaceForCreate: ensureWorkspaceForCreateAndBroadcastExternal,
+  });
+  await loopService.initialize();
+  logger.info({ elapsed: elapsed() }, "Loop service initialized");
+  const createScheduleLocalWorkspaceExternal = async (input: {
+    cwd: string;
+    firstAgentContext: FirstAgentContext;
+  }) => {
+    const workspace = await createLocalCheckoutWorkspace(
+      { cwd: input.cwd, title: resolveFirstAgentPromptTitle(input.firstAgentContext) },
+      { projectRegistry, workspaceRegistry, workspaceGitService },
+    );
+    workspaceAutoName.scheduleForDirectory({
+      workspaceId: workspace.workspaceId,
+      cwd: workspace.cwd,
+      firstAgentContext: input.firstAgentContext,
+    });
+    await emitWorkspaceUpdatesExternal([workspace.workspaceId]);
+    return workspace;
+  };
+  const createSchedulePaseoWorktreeExternal = async (input: {
+    cwd: string;
+    firstAgentContext: FirstAgentContext;
+  }) => {
+    const result = await createPaseoWorktreeForTools({
+      cwd: input.cwd,
+      firstAgentContext: input.firstAgentContext,
+    });
+    await emitWorkspaceUpdatesExternal([result.workspace.workspaceId]);
+    return result;
+  };
+  const archiveScheduleWorkspaceExternal = async (workspaceId: string, repoRoot: string) => {
+    await archiveByScope(
+      {
+        paseoHome: config.paseoHome,
+        paseoWorktreesBaseRoot: config.worktreesRoot,
+        github,
+        workspaceGitService,
+        agentManager,
+        agentStorage,
+        findWorkspaceIdForCwd: findWorkspaceIdForCwdExternal,
+        listActiveWorkspaces: listActiveWorkspacesExternal,
+        archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
+        emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
+        markWorkspaceArchiving: markWorkspaceArchivingExternal,
+        clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
+        killTerminalsForWorkspace: (workspaceIdToKill) =>
+          killTerminalsForWorkspace(
+            {
+              terminalManager,
+              sessionLogger: logger,
+            },
+            workspaceIdToKill,
+          ),
+        sessionLogger: logger,
+      },
+      {
+        scope: { kind: "workspace", workspaceId },
+        repoRoot,
+        paseoWorktreesBaseRoot: config.worktreesRoot,
+        requestId: "schedule-run-finish",
+      },
+    );
+  };
+  const scheduleService = new ScheduleService({
+    paseoHome: config.paseoHome,
+    logger,
+    agentManager,
+    agentStorage,
+    createAgent,
+    createLocalCheckoutWorkspace: createScheduleLocalWorkspaceExternal,
+    createPaseoWorktreeWorkspace: createSchedulePaseoWorktreeExternal,
+    archiveWorkspace: archiveScheduleWorkspaceExternal,
+  });
+  await scheduleService.start();
+  agentManager.setAgentArchivedCallback(async (agentId) => {
+    try {
+      await scheduleService.completeForAgent(agentId);
+    } catch (error) {
+      logger.warn({ err: error, agentId }, "Failed to complete schedules for archived agent");
+    }
+  });
+  logger.info({ elapsed: elapsed() }, "Schedule service initialized");
+  logger.info({ elapsed: elapsed() }, "Loading persisted agent registry");
+  const persistedRecords = await agentStorage.list();
+  logger.info(
+    { elapsed: elapsed() },
+    `Agent registry loaded (${persistedRecords.length} record${persistedRecords.length === 1 ? "" : "s"}); agents will initialize on demand`,
+  );
+  logger.info(
+    "Voice mode configured for agent-scoped resume flow (no dedicated voice assistant provider)",
+  );
+  logger.info({ elapsed: elapsed() }, "Preparing voice and MCP runtime");
+
   const createAgentToolHostDependencies = (
     runtime: PaseoToolRuntimeContext,
   ): PaseoToolHostDependencies => ({
@@ -955,10 +1103,13 @@ export async function createPaseoDaemon(
     listActiveWorkspaces: listActiveWorkspacesExternal,
     archiveWorkspaceRecord: archiveWorkspaceRecordExternal,
     emitWorkspaceUpdatesForWorkspaceIds: emitWorkspaceUpdatesExternal,
+    workspaceRegistry,
     markWorkspaceArchiving: markWorkspaceArchivingExternal,
     clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
-    ensureWorkspaceForCreate: ensureWorkspaceForCreateExternal,
-    createPaseoWorktree: createPaseoWorktreeForTools,
+    ensureWorkspaceForCreate: createAgentCommandDependencies.ensureWorkspaceForCreate,
+    createPaseoWorktree: createAgentCommandDependencies.createPaseoWorktree,
+    browserToolsEnabled: browserToolsPolicy.isEnabled(),
+    browserToolsBroker,
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
     callerAgentId: runtime.callerAgentId,
@@ -1185,6 +1336,7 @@ export async function createPaseoDaemon(
               daemonConfigStore,
               mcpBaseUrl,
               { allowedOrigins, hostnames: configuredHostnames },
+              workspaceAutoName,
               config.auth,
               speechService,
               terminalManager,
@@ -1228,6 +1380,7 @@ export async function createPaseoDaemon(
                 },
               },
               serviceProxyPublicBaseUrl,
+              browserToolsBroker,
             );
 
             if (relayEnabled) {
@@ -1327,6 +1480,7 @@ export async function createPaseoDaemon(
     terminalManager,
     serviceProxy,
     scriptRuntimeStore,
+    browserToolsBroker,
     start,
     stop,
     getListenTarget: () => boundListenTarget,

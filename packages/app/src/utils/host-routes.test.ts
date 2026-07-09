@@ -15,6 +15,7 @@ import {
   decodeWorkspaceIdFromPathSegment,
   encodeFilePathForPathSegment,
   encodeWorkspaceIdForPathSegment,
+  isSettingsSectionSlug,
   normalizeHostSectionSlug,
   parseHostAgentRouteFromPathname,
   parseHostWorkspaceOpenIntentFromPathname,
@@ -45,8 +46,8 @@ describe("workspace route parsing", () => {
   });
 
   it("decodes non-canonical base64url workspace IDs used by older links", () => {
-    expect(decodeWorkspaceIdFromPathSegment("L1VzZXJzL21vYm91ZHJhL2Rldi9wYXNlby")).toBe(
-      "/Users/moboudra/dev/paseo",
+    expect(decodeWorkspaceIdFromPathSegment("L2hvbWUvdXNlci9kZXYvcGFzZW8")).toBe(
+      "/home/user/dev/paseo",
     );
   });
 
@@ -263,6 +264,12 @@ describe("host settings section slugs", () => {
   it("maps old host settings sections to their new names", () => {
     expect(normalizeHostSectionSlug("orchestration")).toBe("agents");
     expect(normalizeHostSectionSlug("daemon")).toBe("host");
+  });
+});
+
+describe("settings section slugs", () => {
+  it("no longer treats daemon as a valid app-level settings section", () => {
+    expect(isSettingsSectionSlug("daemon")).toBe(false);
   });
 });
 

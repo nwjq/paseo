@@ -426,7 +426,21 @@ export const ru: TranslationResources = {
         enterUrl: "Введите URL",
         openDevTools: "Открыть инструменты разработки браузера",
         cancelSelector: "Отменить выбор элемента",
-        selectElement: "Выберите элемент",
+        annotateElement: "Аннотировать элемент",
+        screenshotElement: "Снимок элемента",
+        screenshotCopied: "Снимок скопирован в буфер обмена",
+        elementCopied: "Элемент скопирован в буфер обмена",
+        screenshotFailed: "Не удалось скопировать снимок",
+      },
+      annotate: {
+        title: "Аннотировать элемент",
+        placeholder: "Сообщение агенту об этом элементе…",
+        submit: "Прикрепить",
+        cancel: "Отмена",
+      },
+      devices: {
+        label: "Размер устройства",
+        responsive: "Адаптивный",
       },
       errors: {
         failedToLoad: "Не удалось загрузить страницу",
@@ -789,6 +803,7 @@ export const ru: TranslationResources = {
     },
     sections: {
       sessions: "История",
+      schedules: "Расписания",
     },
     worktreeSetup: {
       title: "Настройка сценариев рабочего дерева",
@@ -1420,6 +1435,7 @@ export const ru: TranslationResources = {
     },
     backToWorkspace: "Назад",
     addHost: "Добавить хост",
+    enableBuiltInDaemon: "Включить встроенный демон",
     projects: "Проекты",
     projectList: {
       hostLoadFailed: "Не удалось загрузить проекты с хоста{{hostName}}:{{message}}.",
@@ -1428,7 +1444,6 @@ export const ru: TranslationResources = {
     groupInfo: "О{{title}}",
     sections: {
       general: "Общий",
-      daemon: "Daemon",
       appearance: "Появление",
       shortcuts: "Ярлыки",
       integrations: "Интеграции",
@@ -1443,7 +1458,7 @@ export const ru: TranslationResources = {
       providers: "Провайдеры",
       usage: "Использование",
       terminals: "Terminals",
-      host: "Host",
+      host: "Обзор",
     },
     general: {
       title: "Общий",

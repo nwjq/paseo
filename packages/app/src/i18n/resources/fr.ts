@@ -426,7 +426,21 @@ export const fr: TranslationResources = {
         enterUrl: "EntrezURL",
         openDevTools: "Outils de développement du navigateur ouvert",
         cancelSelector: "Annuler le sélecteur d'élément",
-        selectElement: "Sélectionner un élément",
+        annotateElement: "Annoter l'élément",
+        screenshotElement: "Capturer l'élément",
+        screenshotCopied: "Capture d'écran copiée dans le presse-papiers",
+        elementCopied: "Élément copié dans le presse-papiers",
+        screenshotFailed: "Impossible de copier la capture",
+      },
+      annotate: {
+        title: "Annoter l'élément",
+        placeholder: "Message à l'agent concernant cet élément…",
+        submit: "Joindre",
+        cancel: "Annuler",
+      },
+      devices: {
+        label: "Taille de l'appareil",
+        responsive: "Adaptatif",
       },
       errors: {
         failedToLoad: "Échec du chargement de la page",
@@ -796,6 +810,7 @@ export const fr: TranslationResources = {
     },
     sections: {
       sessions: "Historique",
+      schedules: "Planifications",
     },
     worktreeSetup: {
       title: "Configurer les scripts d'arbre de travail",
@@ -1431,6 +1446,7 @@ export const fr: TranslationResources = {
     },
     backToWorkspace: "Dos",
     addHost: "Ajouter un hôte",
+    enableBuiltInDaemon: "Activer le démon intégré",
     projects: "Projets",
     projectList: {
       hostLoadFailed: "Impossible de charger les projets depuis l'hôte{{hostName}}:{{message}}",
@@ -1439,7 +1455,6 @@ export const fr: TranslationResources = {
     groupInfo: "À propos de{{title}}",
     sections: {
       general: "Général",
-      daemon: "Daemon",
       appearance: "Apparence",
       shortcuts: "Raccourcis",
       integrations: "Intégrations",
@@ -1454,7 +1469,7 @@ export const fr: TranslationResources = {
       providers: "Fournisseurs",
       usage: "Utilisation",
       terminals: "Terminals",
-      host: "Host",
+      host: "Aperçu",
     },
     general: {
       title: "Général",

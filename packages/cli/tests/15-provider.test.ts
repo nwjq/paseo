@@ -63,7 +63,7 @@ const EXPECTED_CLAUDE_MODELS = [
   {
     id: "claude-sonnet-5",
     model: "Sonnet 5",
-    descriptionFragment: "Efficient for routine tasks",
+    descriptionFragment: "Best for everyday tasks",
   },
   {
     id: "claude-opus-4-7[1m]",

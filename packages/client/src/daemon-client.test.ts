@@ -1,6 +1,8 @@
 import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
 import { DaemonClient, type DaemonTransport, type Logger } from "./daemon-client";
+import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import {
   decodeFileTransferFrame,
   encodeFileTransferFrame,
@@ -130,12 +132,91 @@ function parseSentFrame(
     .parse(JSON.parse(assertStr(data))).message;
 }
 
+function respondToScheduleRequest(
+  mock: ReturnType<typeof createMockTransport>,
+  request: Record<string, unknown>,
+): void {
+  const responseType =
+    request.type === "schedule/create" ? "schedule/create/response" : "schedule/update/response";
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: responseType,
+      payload: {
+        requestId: request.requestId,
+        schedule: null,
+        error: null,
+      },
+    }),
+  );
+}
+
 const clients: DaemonClient[] = [];
 
 afterEach(async () => {
   await Promise.all(clients.map((client) => client.close()));
   clients.length = 0;
   vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
+
+test("does not infer browser automation capabilities from Electron runtime", async () => {
+  vi.stubGlobal("navigator", {
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Paseo/0.1.89 Chrome/146 Electron/41.2.0 Safari/537.36",
+  });
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "electron_unit_test",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ preserveSent: true });
+  await connectPromise;
+
+  const hello = z
+    .object({
+      type: z.literal("hello"),
+      capabilities: z.record(z.unknown()),
+    })
+    .parse(JSON.parse(assertStr(mock.sent[0])));
+  expect(hello.capabilities[CLIENT_CAPS.browserHost]).toBeUndefined();
+});
+
+test("advertises consumer-provided browser automation capabilities", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "browser_capability_unit_test",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+    capabilities: {
+      [CLIENT_CAPS.browserHost]: {
+        supportedCommands: [...BROWSER_AUTOMATION_COMMAND_NAMES],
+        hostKind: "desktop app",
+      },
+    },
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ preserveSent: true });
+  await connectPromise;
+
+  const hello = z
+    .object({
+      type: z.literal("hello"),
+      capabilities: z.record(z.unknown()),
+    })
+    .parse(JSON.parse(assertStr(mock.sent[0])));
+  expect(hello.capabilities[CLIENT_CAPS.browserHost]).toEqual({
+    supportedCommands: [...BROWSER_AUTOMATION_COMMAND_NAMES],
+    hostKind: "desktop app",
+  });
 });
 
 const noopLogger: Logger = {
@@ -453,6 +534,12 @@ test("advertises client capabilities in hello", async () => {
     logger,
     reconnect: { enabled: false },
     transportFactory: () => mock.transport,
+    capabilities: {
+      browser_host: {
+        supportedCommands: ["list_tabs"],
+        hostKind: "desktop app",
+      },
+    },
   });
   clients.push(client);
 
@@ -470,6 +557,152 @@ test("advertises client capabilities in hello", async () => {
       custom_mode_icons: true,
       reasoning_merge_enum: true,
       terminal_reflowable_snapshot: true,
+      browser_host: {
+        supportedCommands: ["list_tabs"],
+        hostKind: "desktop app",
+      },
+    },
+  });
+});
+
+test("sends new-agent run options when creating schedules", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const createPromise = client.scheduleCreate({
+    requestId: "request-1",
+    prompt: "Run the task",
+    cadence: { type: "every", everyMs: 60_000 },
+    target: {
+      type: "new-agent",
+      config: {
+        provider: "claude",
+        cwd: "/tmp/project",
+        thinkingOptionId: "think-hard",
+        archiveOnFinish: false,
+        isolation: "worktree",
+      },
+    },
+  });
+
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toEqual({
+    type: "schedule/create",
+    requestId: "request-1",
+    prompt: "Run the task",
+    cadence: { type: "every", everyMs: 60_000 },
+    target: {
+      type: "new-agent",
+      config: {
+        provider: "claude",
+        cwd: "/tmp/project",
+        thinkingOptionId: "think-hard",
+        archiveOnFinish: false,
+        isolation: "worktree",
+      },
+    },
+  });
+
+  respondToScheduleRequest(mock, request);
+  await expect(createPromise).resolves.toEqual({
+    requestId: "request-1",
+    schedule: null,
+    error: null,
+  });
+});
+
+test("sends new-agent run options when updating schedules", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const updatePromise = client.scheduleUpdate({
+    id: "schedule-1",
+    requestId: "request-1",
+    newAgentConfig: {
+      thinkingOptionId: "think-hard",
+      archiveOnFinish: false,
+      isolation: "worktree",
+    },
+  });
+
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toEqual({
+    type: "schedule/update",
+    requestId: "request-1",
+    scheduleId: "schedule-1",
+    newAgentConfig: {
+      thinkingOptionId: "think-hard",
+      archiveOnFinish: false,
+      isolation: "worktree",
+    },
+  });
+
+  respondToScheduleRequest(mock, request);
+  await expect(updatePromise).resolves.toEqual({
+    requestId: "request-1",
+    schedule: null,
+    error: null,
+  });
+});
+
+test("sends typed browser automation execute responses", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  client.sendBrowserAutomationExecuteResponse({
+    type: "browser.automation.execute.response",
+    payload: {
+      requestId: "req-1",
+      ok: true,
+      result: { command: "list_tabs", tabs: [] },
+    },
+  });
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "browser.automation.execute.response",
+    payload: {
+      requestId: "req-1",
+      ok: true,
+      result: { command: "list_tabs", tabs: [] },
     },
   });
 });

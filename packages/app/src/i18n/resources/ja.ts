@@ -426,7 +426,21 @@ export const ja: TranslationResources = {
         enterUrl: "URLを入力",
         openDevTools: "ブラウザ開発ツールを開く",
         cancelSelector: "要素セレクターをキャンセル",
-        selectElement: "要素を選択",
+        annotateElement: "要素に注釈を付ける",
+        screenshotElement: "要素のスクリーンショット",
+        screenshotCopied: "スクリーンショットをクリップボードにコピーしました",
+        elementCopied: "要素をクリップボードにコピーしました",
+        screenshotFailed: "スクリーンショットをコピーできませんでした",
+      },
+      annotate: {
+        title: "要素に注釈を付ける",
+        placeholder: "この要素についてエージェントへのメッセージ…",
+        submit: "添付",
+        cancel: "キャンセル",
+      },
+      devices: {
+        label: "デバイスサイズ",
+        responsive: "レスポンシブ",
       },
       errors: {
         failedToLoad: "ページの読み込みに失敗しました",
@@ -782,6 +796,7 @@ export const ja: TranslationResources = {
     },
     sections: {
       sessions: "履歴",
+      schedules: "スケジュール",
     },
     worktreeSetup: {
       title: "ワークツリースクリプトを設定",
@@ -1406,6 +1421,7 @@ export const ja: TranslationResources = {
     },
     backToWorkspace: "戻る",
     addHost: "ホストを追加",
+    enableBuiltInDaemon: "組み込みデーモンを有効にする",
     projects: "プロジェクト",
     projectList: {
       hostLoadFailed: "ホスト{{hostName}}からプロジェクトを読み込めませんでした: {{message}}",
@@ -1414,7 +1430,6 @@ export const ja: TranslationResources = {
     groupInfo: "{{title}}について",
     sections: {
       general: "一般",
-      daemon: "デーモン",
       appearance: "外観",
       shortcuts: "ショートカット",
       integrations: "連携",
@@ -1429,7 +1444,7 @@ export const ja: TranslationResources = {
       providers: "プロバイダー",
       usage: "使用状況",
       terminals: "ターミナル",
-      host: "ホスト",
+      host: "概要",
     },
     general: {
       title: "一般",

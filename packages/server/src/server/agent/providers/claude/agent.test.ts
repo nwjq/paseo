@@ -438,7 +438,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     }
   });
 
-  test("exposes Ultracode only on Claude models that support it", async () => {
+  test("exposes Ultra Code on xhigh-capable Claude models", async () => {
     const emptyConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-models-empty-"));
     try {
       const client = new ClaudeAgentClient({
@@ -459,8 +459,9 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       expect(getThinkingIds("claude-opus-4-8[1m]")).toContain("ultracode");
       expect(getThinkingIds("claude-opus-4-8")).toContain("ultracode");
       expect(getThinkingIds("claude-sonnet-5")).toContain("xhigh");
-      expect(getThinkingIds("claude-sonnet-5")).not.toContain("ultracode");
-      expect(getThinkingIds("claude-opus-4-7")).not.toContain("ultracode");
+      expect(getThinkingIds("claude-sonnet-5")).toContain("ultracode");
+      expect(getThinkingIds("claude-opus-4-7[1m]")).toContain("ultracode");
+      expect(getThinkingIds("claude-opus-4-7")).toContain("ultracode");
       expect(getThinkingIds("claude-sonnet-4-6")).not.toContain("ultracode");
     } finally {
       await fs.rm(emptyConfigDir, { recursive: true, force: true });
@@ -596,6 +597,30 @@ describe("ClaudeAgentSession features", () => {
         model: "claude-opus-4-8",
       }),
     ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
+
+    await expect(
+      client.listFeatures({
+        provider: "claude",
+        cwd: process.cwd(),
+        model: "claude-opus-4-8[1m]",
+      }),
+    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
+
+    await expect(
+      client.listFeatures({
+        provider: "claude",
+        cwd: process.cwd(),
+        model: "claude-opus-4-8-20260101",
+      }),
+    ).resolves.toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
+
+    await expect(
+      client.listFeatures({
+        provider: "claude",
+        cwd: process.cwd(),
+        model: "openrouter/anthropic/claude-opus-4-8",
+      }),
+    ).resolves.toEqual([]);
 
     await expect(
       client.listFeatures({
@@ -1892,15 +1917,9 @@ describe("ClaudeAgentSession context window usage", () => {
     }
   });
 
-  test("selected native-1M Claude models seed active context window usage with 1M max tokens", async () => {
+  test("native 1M Claude models seed active context window usage from the catalog", async () => {
     const session = await createSessionForTurns(
-      [
-        [
-          createInitMessage(),
-          createMessageStartEvent(),
-          createSuccessResult({ modelUsage: undefined }),
-        ],
-      ],
+      [[createInitMessage(), createMessageStartEvent(), createSuccessResult()]],
       { model: "claude-sonnet-5" },
     );
 
@@ -1915,15 +1934,6 @@ describe("ClaudeAgentSession context window usage", () => {
             contextWindowMaxTokens: 1_000_000,
             contextWindowUsedTokens: 150,
           },
-        }),
-      );
-      expect(events).toContainEqual(
-        expect.objectContaining({
-          type: "turn_completed",
-          provider: "claude",
-          usage: expect.objectContaining({
-            contextWindowMaxTokens: 1_000_000,
-          }),
         }),
       );
     } finally {

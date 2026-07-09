@@ -422,7 +422,21 @@ export const ar: TranslationResources = {
         enterUrl: "أدخل URL",
         openDevTools: "افتح أدوات تطوير المتصفح",
         cancelSelector: "إلغاء محدد العنصر",
-        selectElement: "حدد العنصر",
+        annotateElement: "التعليق على العنصر",
+        screenshotElement: "لقطة للعنصر",
+        screenshotCopied: "تم نسخ لقطة الشاشة إلى الحافظة",
+        elementCopied: "تم نسخ العنصر إلى الحافظة",
+        screenshotFailed: "تعذّر نسخ لقطة الشاشة",
+      },
+      annotate: {
+        title: "التعليق على العنصر",
+        placeholder: "رسالة إلى الوكيل حول هذا العنصر…",
+        submit: "إرفاق",
+        cancel: "إلغاء",
+      },
+      devices: {
+        label: "حجم الجهاز",
+        responsive: "متجاوب",
       },
       errors: {
         failedToLoad: "فشل تحميل الصفحة",
@@ -770,6 +784,7 @@ export const ar: TranslationResources = {
     },
     sections: {
       sessions: "السجل",
+      schedules: "الجداول",
     },
     worktreeSetup: {
       title: "إعداد البرامج النصية لشجرة العمل",
@@ -1389,6 +1404,7 @@ export const ar: TranslationResources = {
     },
     backToWorkspace: "خلف",
     addHost: "أضف مضيفًا",
+    enableBuiltInDaemon: "تفعيل البرنامج الخفي المدمج",
     projects: "المشاريع",
     projectList: {
       hostLoadFailed: "تعذر تحميل المشاريع من المضيف{{hostName}}:{{message}}",
@@ -1397,7 +1413,6 @@ export const ar: TranslationResources = {
     groupInfo: "حول{{title}}",
     sections: {
       general: "عام",
-      daemon: "Daemon",
       appearance: "مظهر",
       shortcuts: "الاختصارات",
       integrations: "التكامل",
@@ -1412,7 +1427,7 @@ export const ar: TranslationResources = {
       providers: "مقدمي الخدمات",
       usage: "الاستخدام",
       terminals: "Terminals",
-      host: "Host",
+      host: "نظرة عامة",
     },
     general: {
       title: "عام",

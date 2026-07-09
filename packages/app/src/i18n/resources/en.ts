@@ -422,7 +422,21 @@ export const en = {
         enterUrl: "Enter URL",
         openDevTools: "Open browser dev tools",
         cancelSelector: "Cancel element selector",
-        selectElement: "Select element",
+        annotateElement: "Annotate element",
+        screenshotElement: "Screenshot element",
+        screenshotCopied: "Copied screenshot to clipboard",
+        elementCopied: "Copied element to clipboard",
+        screenshotFailed: "Couldn't copy screenshot",
+      },
+      annotate: {
+        title: "Annotate element",
+        placeholder: "Message to the agent about this element…",
+        submit: "Attach",
+        cancel: "Cancel",
+      },
+      devices: {
+        label: "Device size",
+        responsive: "Responsive",
       },
       errors: {
         failedToLoad: "Failed to load page",
@@ -777,6 +791,7 @@ export const en = {
     },
     sections: {
       sessions: "History",
+      schedules: "Schedules",
     },
     worktreeSetup: {
       title: "Set up worktree scripts",
@@ -1397,6 +1412,7 @@ export const en = {
     },
     backToWorkspace: "Back",
     addHost: "Add host",
+    enableBuiltInDaemon: "Enable built-in daemon",
     projects: "Projects",
     projectList: {
       hostLoadFailed: "Couldn't load projects from host {{hostName}}: {{message}}",
@@ -1405,7 +1421,6 @@ export const en = {
     groupInfo: "About {{title}}",
     sections: {
       general: "General",
-      daemon: "Daemon",
       appearance: "Appearance",
       shortcuts: "Shortcuts",
       integrations: "Integrations",
@@ -1420,7 +1435,7 @@ export const en = {
       providers: "Providers",
       usage: "Usage",
       terminals: "Terminals",
-      host: "Host",
+      host: "Overview",
     },
     general: {
       title: "General",

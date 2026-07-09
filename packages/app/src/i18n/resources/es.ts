@@ -426,7 +426,21 @@ export const es: TranslationResources = {
         enterUrl: "IngreseURL",
         openDevTools: "Abrir herramientas de desarrollo del navegador",
         cancelSelector: "Cancelar selector de elementos",
-        selectElement: "Seleccionar elemento",
+        annotateElement: "Anotar elemento",
+        screenshotElement: "Capturar elemento",
+        screenshotCopied: "Captura copiada al portapapeles",
+        elementCopied: "Elemento copiado al portapapeles",
+        screenshotFailed: "No se pudo copiar la captura",
+      },
+      annotate: {
+        title: "Anotar elemento",
+        placeholder: "Mensaje al agente sobre este elemento…",
+        submit: "Adjuntar",
+        cancel: "Cancelar",
+      },
+      devices: {
+        label: "Tamaño del dispositivo",
+        responsive: "Adaptable",
       },
       errors: {
         failedToLoad: "No se pudo cargar la página",
@@ -797,6 +811,7 @@ export const es: TranslationResources = {
     },
     sections: {
       sessions: "Historial",
+      schedules: "Horarios",
     },
     worktreeSetup: {
       title: "Configurar secuencias de comandos del árbol de trabajo",
@@ -1428,6 +1443,7 @@ export const es: TranslationResources = {
     },
     backToWorkspace: "Atrás",
     addHost: "Agregar anfitrión",
+    enableBuiltInDaemon: "Activar el demonio integrado",
     projects: "Proyectos",
     projectList: {
       hostLoadFailed: "No se pudieron cargar proyectos desde el host{{hostName}}:{{message}}",
@@ -1436,7 +1452,6 @@ export const es: TranslationResources = {
     groupInfo: "Acerca de{{title}}",
     sections: {
       general: "General",
-      daemon: "Daemon",
       appearance: "Apariencia",
       shortcuts: "Atajos",
       integrations: "Integraciones",
@@ -1451,7 +1466,7 @@ export const es: TranslationResources = {
       providers: "Proveedores",
       usage: "Uso",
       terminals: "Terminals",
-      host: "Host",
+      host: "Resumen",
     },
     general: {
       title: "General",

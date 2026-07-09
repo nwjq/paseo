@@ -422,7 +422,21 @@ export const zhCN: TranslationResources = {
         enterUrl: "输入 URL",
         openDevTools: "打开浏览器开发者工具",
         cancelSelector: "取消元素选择器",
-        selectElement: "选择元素",
+        annotateElement: "标注元素",
+        screenshotElement: "截图元素",
+        screenshotCopied: "已将截图复制到剪贴板",
+        elementCopied: "已将元素复制到剪贴板",
+        screenshotFailed: "无法复制截图",
+      },
+      annotate: {
+        title: "标注元素",
+        placeholder: "给智能体关于此元素的留言…",
+        submit: "附加",
+        cancel: "取消",
+      },
+      devices: {
+        label: "设备尺寸",
+        responsive: "自适应",
       },
       errors: {
         failedToLoad: "页面加载失败",
@@ -764,6 +778,7 @@ export const zhCN: TranslationResources = {
     },
     sections: {
       sessions: "历史",
+      schedules: "计划",
     },
     worktreeSetup: {
       title: "设置 worktree scripts",
@@ -1372,6 +1387,7 @@ export const zhCN: TranslationResources = {
     },
     backToWorkspace: "返回",
     addHost: "添加主机",
+    enableBuiltInDaemon: "启用内置 daemon",
     projects: "项目",
     projectList: {
       hostLoadFailed: "无法从 Host {{hostName}} 加载 projects：{{message}}",
@@ -1380,7 +1396,6 @@ export const zhCN: TranslationResources = {
     groupInfo: "关于 {{title}}",
     sections: {
       general: "通用",
-      daemon: "Daemon",
       appearance: "外观",
       shortcuts: "快捷键",
       integrations: "集成",
@@ -1395,7 +1410,7 @@ export const zhCN: TranslationResources = {
       providers: "Providers",
       usage: "使用情况",
       terminals: "Terminals",
-      host: "Host",
+      host: "概览",
     },
     general: {
       title: "通用",
