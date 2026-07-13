@@ -623,7 +623,7 @@ export const ptBR: TranslationResources = {
           success: "Atualizado",
         },
         archive: {
-          label: "Arquivar worktree",
+          label: "Arquivar workspace",
           pending: "Arquivando...",
           success: "Arquivado",
         },
@@ -675,8 +675,6 @@ export const ptBR: TranslationResources = {
             "Atualizar não está disponível enquanto há alterações locais. Faça commit ou stash primeiro",
           updateCurrent:
             "Atualizar não está disponível porque esta branch já está atualizada com {{baseRef}}",
-          archiveNotWorktree:
-            "Arquivar não está disponível aqui porque este workspace não foi criado como um worktree do Paseo",
           mergePrNoGithub:
             "Merge da PR não está disponível agora porque o GitHub não está conectado",
           mergePrMissing: "Merge da PR não está disponível porque ainda não há uma pull request",
@@ -703,11 +701,9 @@ export const ptBR: TranslationResources = {
           baseRefUnavailable: "Ref base indisponível",
           failedMerge: "Falha ao fazer merge",
           failedMergeFromBase: "Falha ao fazer merge da base",
-          worktreePathUnavailable: "Caminho do worktree indisponível",
-          failedArchive: "Falha ao arquivar worktree",
         },
         archiveWarning: {
-          title: 'Arquivar "{{worktreeName}}"?',
+          title: 'Arquivar "{{workspaceName}}"?',
           confirm: "Arquivar",
           cancel: "Cancelar",
           uncommittedChanges: "Alterações sem commit",
@@ -725,11 +721,19 @@ export const ptBR: TranslationResources = {
         tooLarge: "Diff grande demais para exibir",
         unified: "Diff unificado",
         split: "Diff lado a lado",
+        switchToUnified: "Alternar para diff unificado",
+        switchToSplit: "Alternar para diff lado a lado",
+        showTreeView: "Mostrar árvore de pastas",
+        showFlatView: "Mostrar lista plana de arquivos",
+        options: "Opções do diff",
         hideWhitespace: "Ocultar espaços em branco",
+        showWhitespace: "Mostrar espaços em branco",
         scrollLongLines: "Rolar linhas longas",
         wrapLongLines: "Quebrar linhas longas",
         collapseAll: "Recolher todos os arquivos",
         expandAll: "Expandir todos os arquivos",
+        collapseAllFolders: "Recolher todas as pastas",
+        expandAllFolders: "Expandir todas as pastas",
         refreshing: "Atualizando",
         refresh: "Atualizar",
         refreshState: "Atualizar estado do git e do GitHub",
@@ -796,6 +800,7 @@ export const ptBR: TranslationResources = {
     actions: {
       addProject: "Adicionar projeto",
       newWorkspace: "Novo workspace",
+      hosts: "Hosts",
       home: "Início",
       settings: "Configurações",
       closeSidebar: "Fechar barra lateral",
@@ -849,7 +854,7 @@ export const ptBR: TranslationResources = {
         copyBranchName: "Copiar nome da branch",
         rename: "Renomear workspace",
         archive: "Arquivar",
-        archiveWorktree: "Arquivar worktree",
+        archiveWorkspace: "Arquivar workspace",
         hideFromSidebar: "Ocultar da barra lateral",
         archiving: "Arquivando...",
         hiding: "Ocultando...",
@@ -872,7 +877,7 @@ export const ptBR: TranslationResources = {
         branchNameCopied: "Nome da branch copiado",
         hostDisconnected: "Host não está conectado",
         hideFailed: "Falha ao ocultar workspace",
-        archiveFailed: "Falha ao arquivar worktree",
+        archiveFailed: "Falha ao arquivar workspace",
       },
     },
   },
@@ -1070,6 +1075,12 @@ export const ptBR: TranslationResources = {
       },
     },
   },
+  rootError: {
+    kicker: "Algo deu errado",
+    title: "O Paseo encontrou um problema.",
+    body: "Tente novamente para recarregar o app. Se isso continuar acontecendo, inclua os detalhes abaixo ao relatar o problema.",
+    details: "Detalhes",
+  },
   startup: {
     errorTitle: "Algo deu errado",
     errorDescription:
@@ -1101,7 +1112,8 @@ export const ptBR: TranslationResources = {
     },
   },
   projectPicker: {
-    placeholder: "Digite um caminho de diretório...",
+    placeholder: "Digite para pesquisar...",
+    browse: "Procurar…",
     opening: "Abrindo projeto...",
     searching: "Buscando...",
     empty: "Comece digitando um caminho",
@@ -1482,6 +1494,11 @@ export const ptBR: TranslationResources = {
         description: "Linhas mantidas no buffer do terminal integrado",
         accessibilityLabel: "Linhas do scrollback do terminal",
       },
+      autoExpandReasoning: {
+        label: "Sempre expandir raciocínio",
+        description:
+          "Mostrar os blocos de pensamento e raciocínio do agente totalmente expandidos por padrão",
+      },
       language: {
         label: "Idioma",
         description: "Idioma do app",
@@ -1563,6 +1580,9 @@ export const ptBR: TranslationResources = {
           auto: "Sistema",
         },
       },
+      detailLevel: {
+        title: "Nível de detalhe",
+      },
       fonts: {
         title: "Fontes",
         systemDefault: "Sistema padrão",
@@ -1608,7 +1628,7 @@ export const ptBR: TranslationResources = {
         openProject: "Abrir projeto",
         newWorkspace: "Novo workspace",
         newWorktree: "Novo worktree",
-        archiveWorktree: "Arquivar worktree",
+        archiveWorkspace: "Arquivar workspace",
         newTab: "Nova aba",
         closeCurrentTab: "Fechar aba atual",
         jumpToWorkspace: "Ir para workspace",
