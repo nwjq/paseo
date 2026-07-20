@@ -3970,10 +3970,15 @@ export class Session {
     });
     void Promise.all([
       this.gitMutation.notifyGitMutation(input.cwd, "create-worktree"),
-      this.gitMutation.notifyGitMutation(result.worktree.worktreePath, "create-worktree"),
+      this.gitMutation.notifyGitMutation(result.workspace.cwd, "create-worktree"),
     ]).catch((error) => {
       this.sessionLogger.warn(
-        { err: error, cwd: input.cwd, worktreePath: result.worktree.worktreePath },
+        {
+          err: error,
+          cwd: input.cwd,
+          worktreePath: result.worktree.worktreePath,
+          workspaceCwd: result.workspace.cwd,
+        },
         "Failed to warm git snapshots after creating worktree",
       );
     });
