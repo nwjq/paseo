@@ -54,12 +54,13 @@ export const ru: TranslationResources = {
       close: "Закрыть меню",
     },
     commandCenter: {
-      placeholder: "Введите команду или найдите агентов...",
+      placeholder: "Поиск команд, рабочих пространств и агентов...",
       noMatches: "Нет совпадений",
       actions: "Действия",
+      workspaces: "Рабочие пространства",
       agents: "Агенты",
       newAgent: "Новый агент",
-      openProject: "Открыть проект",
+      addProject: "Добавить проект",
       home: "Дом",
     },
   },
@@ -793,6 +794,9 @@ export const ru: TranslationResources = {
     },
   },
   sidebar: {
+    pinned: {
+      title: "Закреплённые",
+    },
     host: {
       noHost: "Нет хоста",
       switchTitle: "Сменить хост",
@@ -805,6 +809,17 @@ export const ru: TranslationResources = {
       home: "Дом",
       settings: "Настройки",
       closeSidebar: "Закрыть боковую панель",
+    },
+    help: {
+      trigger: "Помощь и поддержка",
+      sectionHelp: "Помощь",
+      diagnostics: "Запустить диагностику",
+      shortcuts: "Сочетания клавиш",
+      reportIssue: "Сообщить о проблеме",
+      discord: "Discord",
+      github: "Создать issue в GitHub",
+      whatsNew: "Что нового",
+      version: "Paseo {{version}}",
     },
     sections: {
       sessions: "История",
@@ -854,6 +869,8 @@ export const ru: TranslationResources = {
         copyPath: "Копировать путь",
         copyBranchName: "Скопировать название ветки",
         rename: "Переименовать рабочую область",
+        pin: "Закрепить вверху",
+        unpin: "Открепить",
         archive: "Архив",
         archiveWorkspace: "Архивировать рабочее пространство",
         hideFromSidebar: "Скрыть с боковой панели",
@@ -1385,6 +1402,8 @@ export const ru: TranslationResources = {
     detachTooltip: "Отсоединить субагент",
     archiveAction: "Архив{{label}}",
     archiveTooltip: "Архивный субагент",
+    archiveFinishedAction: "Архивировать завершенные субагенты",
+    archiveFinishedTooltip: "Архивировать завершенные",
   },
   panels: {
     draft: {
@@ -1406,6 +1425,33 @@ export const ru: TranslationResources = {
     subAgentActivity: "Субагентская деятельность",
     input: "Вход",
     output: "Выход",
+  },
+  toolCallGroup: {
+    editedFiles: {
+      one: "изменён {{count}} файл",
+      other: "изменено {{count}} файлов",
+    },
+    commands: {
+      one: "выполнена {{count}} команда",
+      other: "выполнено {{count}} команд",
+    },
+    readFiles: {
+      one: "прочитан {{count}} файл",
+      other: "прочитано {{count}} файлов",
+    },
+    searches: {
+      one: "выполнен {{count}} поиск",
+      other: "выполнено {{count}} поисков",
+    },
+    otherTools: {
+      one: "использован {{count}} другой инструмент",
+      other: "использовано {{count}} других инструментов",
+    },
+    paseoCalls: {
+      one: "Paseo вызван {{count}} раз",
+      other: "Paseo вызван {{count}} раз",
+    },
+    and: "и",
   },
   renameModal: {
     rename: "Переименовать",
@@ -1474,6 +1520,18 @@ export const ru: TranslationResources = {
     },
     general: {
       title: "Общий",
+      browserData: {
+        title: "Данные браузера",
+        siteData: "Файлы cookie и данные сайтов",
+        description: "Вкладки браузера используют общие данные входа и данные сайтов в Paseo.",
+        clear: "Очистить данные браузера",
+        clearing: "Очистка...",
+        confirmTitle: "Очистить данные браузера?",
+        confirmMessage:
+          "На сайтах будет выполнен выход, а открытые вкладки браузера перезагрузятся.",
+        success: "Данные браузера очищены.",
+        error: "Не удалось очистить данные браузера.",
+      },
       defaultSend: {
         label: "Отправка по умолчанию",
         descriptions: {
@@ -1503,6 +1561,15 @@ export const ru: TranslationResources = {
         label: "Всегда разворачивать размышления",
         description:
           "По умолчанию показывать блоки размышлений и логики агента полностью развернутыми",
+      },
+      toolCallDetail: {
+        label: "Отображение вызовов инструментов",
+        description: "Как вызовы инструментов отображаются на временной шкале",
+        accessibilityLabel: "Выбрать отображение вызовов инструментов ({{value}})",
+        options: {
+          overview: "Сводка",
+          detailed: "Полная детализация",
+        },
       },
       language: {
         label: "Язык",

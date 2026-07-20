@@ -55,12 +55,13 @@ export const fr: TranslationResources = {
       close: "Fermer le menu",
     },
     commandCenter: {
-      placeholder: "Tapez une commande ou recherchez des agents...",
+      placeholder: "Rechercher des commandes, espaces de travail et agents...",
       noMatches: "Aucune correspondance",
       actions: "Actes",
+      workspaces: "Espaces de travail",
       agents: "Agents",
       newAgent: "Nouvel agent",
-      openProject: "Projet ouvert",
+      addProject: "Ajouter un projet",
       home: "Maison",
     },
   },
@@ -800,6 +801,9 @@ export const fr: TranslationResources = {
     },
   },
   sidebar: {
+    pinned: {
+      title: "Épinglés",
+    },
     host: {
       noHost: "Aucun hôte",
       switchTitle: "Changer d'hôte",
@@ -812,6 +816,17 @@ export const fr: TranslationResources = {
       home: "Maison",
       settings: "Paramètres",
       closeSidebar: "Fermer la barre latérale",
+    },
+    help: {
+      trigger: "Aide et assistance",
+      sectionHelp: "Aide",
+      diagnostics: "Lancer le diagnostic",
+      shortcuts: "Raccourcis clavier",
+      reportIssue: "Signaler un problème",
+      discord: "Discord",
+      github: "Créer un ticket GitHub",
+      whatsNew: "Nouveautés",
+      version: "Paseo {{version}}",
     },
     sections: {
       sessions: "Historique",
@@ -861,6 +876,8 @@ export const fr: TranslationResources = {
         copyPath: "Copier le chemin",
         copyBranchName: "Copier le nom de la branche",
         rename: "Renommer l'espace de travail",
+        pin: "Épingler en haut",
+        unpin: "Désépingler",
         archive: "Archive",
         archiveWorkspace: "Archiver l’espace de travail",
         hideFromSidebar: "Masquer de la barre latérale",
@@ -1396,6 +1413,8 @@ export const fr: TranslationResources = {
     detachTooltip: "Detacher le sous-agent",
     archiveAction: "Archiver{{label}}",
     archiveTooltip: "Sous-agent d'archivage",
+    archiveFinishedAction: "Archiver les sous-agents terminés",
+    archiveFinishedTooltip: "Archiver les terminés",
   },
   panels: {
     draft: {
@@ -1417,6 +1436,33 @@ export const fr: TranslationResources = {
     subAgentActivity: "Activité du sous-agent",
     input: "Saisir",
     output: "Sortir",
+  },
+  toolCallGroup: {
+    editedFiles: {
+      one: "a modifié {{count}} fichier",
+      other: "a modifié {{count}} fichiers",
+    },
+    commands: {
+      one: "a exécuté {{count}} commande",
+      other: "a exécuté {{count}} commandes",
+    },
+    readFiles: {
+      one: "a lu {{count}} fichier",
+      other: "a lu {{count}} fichiers",
+    },
+    searches: {
+      one: "a effectué {{count}} recherche",
+      other: "a effectué {{count}} recherches",
+    },
+    otherTools: {
+      one: "a utilisé {{count}} autre outil",
+      other: "a utilisé {{count}} autres outils",
+    },
+    paseoCalls: {
+      one: "a appelé Paseo {{count}} fois",
+      other: "a appelé Paseo {{count}} fois",
+    },
+    and: "et",
   },
   renameModal: {
     rename: "Rebaptiser",
@@ -1485,6 +1531,18 @@ export const fr: TranslationResources = {
     },
     general: {
       title: "Général",
+      browserData: {
+        title: "Données du navigateur",
+        siteData: "Cookies et données des sites",
+        description:
+          "Les onglets du navigateur partagent les connexions et les données des sites dans Paseo.",
+        clear: "Effacer les données du navigateur",
+        clearing: "Effacement...",
+        confirmTitle: "Effacer les données du navigateur ?",
+        confirmMessage: "Vous serez déconnecté des sites et les onglets ouverts seront rechargés.",
+        success: "Données du navigateur effacées.",
+        error: "Impossible d'effacer les données du navigateur.",
+      },
       defaultSend: {
         label: "Envoi par défaut",
         descriptions: {
@@ -1515,6 +1573,15 @@ export const fr: TranslationResources = {
       autoExpandReasoning: {
         label: "Toujours afficher le raisonnement",
         description: "Afficher le raisonnement de l'agent entièrement développé par défaut",
+      },
+      toolCallDetail: {
+        label: "Affichage des appels d’outils",
+        description: "Comment les appels d’outils apparaissent dans la chronologie",
+        accessibilityLabel: "Sélectionner l’affichage des appels d’outils ({{value}})",
+        options: {
+          overview: "Résumé",
+          detailed: "Détails complets",
+        },
       },
       language: {
         label: "Langue",

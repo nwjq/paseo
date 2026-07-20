@@ -54,12 +54,13 @@ export const es: TranslationResources = {
       close: "Cerrar menú",
     },
     commandCenter: {
-      placeholder: "Escriba un comando o busque agentes...",
+      placeholder: "Buscar comandos, espacios de trabajo y agentes...",
       noMatches: "No hay coincidencias",
       actions: "Comportamiento",
+      workspaces: "Espacios de trabajo",
       agents: "Agentes",
       newAgent: "Nuevo agente",
-      openProject: "Abrir proyecto",
+      addProject: "Agregar proyecto",
       home: "Hogar",
     },
   },
@@ -801,6 +802,9 @@ export const es: TranslationResources = {
     },
   },
   sidebar: {
+    pinned: {
+      title: "Anclados",
+    },
     host: {
       noHost: "Sin anfitrión",
       switchTitle: "Cambiar de anfitrión",
@@ -813,6 +817,17 @@ export const es: TranslationResources = {
       home: "Hogar",
       settings: "Ajustes",
       closeSidebar: "Cerrar barra lateral",
+    },
+    help: {
+      trigger: "Ayuda y soporte",
+      sectionHelp: "Ayuda",
+      diagnostics: "Ejecutar diagnóstico",
+      shortcuts: "Atajos de teclado",
+      reportIssue: "Informar de un problema",
+      discord: "Discord",
+      github: "Crear incidencia en GitHub",
+      whatsNew: "Novedades",
+      version: "Paseo {{version}}",
     },
     sections: {
       sessions: "Historial",
@@ -862,6 +877,8 @@ export const es: TranslationResources = {
         copyPath: "Copiar ruta",
         copyBranchName: "Copiar nombre de sucursal",
         rename: "Cambiar nombre del espacio de trabajo",
+        pin: "Anclar arriba",
+        unpin: "Desanclar",
         archive: "Archivo",
         archiveWorkspace: "Archivar espacio de trabajo",
         hideFromSidebar: "Ocultar de la barra lateral",
@@ -1393,6 +1410,8 @@ export const es: TranslationResources = {
     detachTooltip: "Separar subagente",
     archiveAction: "Archivo{{label}}",
     archiveTooltip: "Subagente de archivo",
+    archiveFinishedAction: "Archivar subagentes finalizados",
+    archiveFinishedTooltip: "Archivar finalizados",
   },
   panels: {
     draft: {
@@ -1414,6 +1433,33 @@ export const es: TranslationResources = {
     subAgentActivity: "Actividad de subagente",
     input: "Aporte",
     output: "Producción",
+  },
+  toolCallGroup: {
+    editedFiles: {
+      one: "editó {{count}} archivo",
+      other: "editó {{count}} archivos",
+    },
+    commands: {
+      one: "ejecutó {{count}} comando",
+      other: "ejecutó {{count}} comandos",
+    },
+    readFiles: {
+      one: "leyó {{count}} archivo",
+      other: "leyó {{count}} archivos",
+    },
+    searches: {
+      one: "buscó {{count}} vez",
+      other: "buscó {{count}} veces",
+    },
+    otherTools: {
+      one: "usó {{count}} herramienta adicional",
+      other: "usó {{count}} herramientas adicionales",
+    },
+    paseoCalls: {
+      one: "llamó a Paseo {{count}} vez",
+      other: "llamó a Paseo {{count}} veces",
+    },
+    and: "y",
   },
   renameModal: {
     rename: "Rebautizar",
@@ -1482,6 +1528,19 @@ export const es: TranslationResources = {
     },
     general: {
       title: "General",
+      browserData: {
+        title: "Datos del navegador",
+        siteData: "Cookies y datos de sitios",
+        description:
+          "Las pestañas del navegador comparten inicios de sesión y datos de sitios en Paseo.",
+        clear: "Borrar datos del navegador",
+        clearing: "Borrando...",
+        confirmTitle: "¿Borrar los datos del navegador?",
+        confirmMessage:
+          "Se cerrarán las sesiones de los sitios y se recargarán las pestañas abiertas del navegador.",
+        success: "Datos del navegador borrados.",
+        error: "No se pudieron borrar los datos del navegador.",
+      },
       defaultSend: {
         label: "Envío predeterminado",
         descriptions: {
@@ -1513,6 +1572,15 @@ export const es: TranslationResources = {
         label: "Siempre expandir razonamiento",
         description:
           "Mostrar los bloques de pensamiento y razonamiento del agente totalmente expandidos de forma predeterminada",
+      },
+      toolCallDetail: {
+        label: "Visualización de llamadas a herramientas",
+        description: "Cómo aparecen las llamadas a herramientas en la cronología",
+        accessibilityLabel: "Seleccionar visualización de llamadas a herramientas ({{value}})",
+        options: {
+          overview: "Resumen",
+          detailed: "Detalle completo",
+        },
       },
       language: {
         label: "Idioma",

@@ -54,12 +54,13 @@ export const zhCN: TranslationResources = {
       close: "关闭菜单",
     },
     commandCenter: {
-      placeholder: "输入命令或搜索 Agent...",
+      placeholder: "搜索命令、工作区和 Agent...",
       noMatches: "没有匹配项",
       actions: "操作",
+      workspaces: "工作区",
       agents: "Agents",
       newAgent: "新建 Agent",
-      openProject: "打开项目",
+      addProject: "添加 project",
       home: "首页",
     },
   },
@@ -769,6 +770,9 @@ export const zhCN: TranslationResources = {
     },
   },
   sidebar: {
+    pinned: {
+      title: "已置顶",
+    },
     host: {
       noHost: "没有 Host",
       switchTitle: "切换 Host",
@@ -781,6 +785,17 @@ export const zhCN: TranslationResources = {
       home: "首页",
       settings: "设置",
       closeSidebar: "关闭侧边栏",
+    },
+    help: {
+      trigger: "帮助与支持",
+      sectionHelp: "帮助",
+      diagnostics: "运行诊断",
+      shortcuts: "键盘快捷键",
+      reportIssue: "报告问题",
+      discord: "Discord",
+      github: "创建 GitHub Issue",
+      whatsNew: "新功能",
+      version: "Paseo {{version}}",
     },
     sections: {
       sessions: "历史",
@@ -828,6 +843,8 @@ export const zhCN: TranslationResources = {
         copyPath: "复制路径",
         copyBranchName: "复制分支名称",
         rename: "重命名 workspace",
+        pin: "置顶",
+        unpin: "取消置顶",
         archive: "归档",
         archiveWorkspace: "归档工作区",
         hideFromSidebar: "从侧边栏隐藏",
@@ -1338,6 +1355,8 @@ export const zhCN: TranslationResources = {
     detachTooltip: "分离 subagent",
     archiveAction: "归档 {{label}}",
     archiveTooltip: "归档 subagent",
+    archiveFinishedAction: "归档已完成的 subagent",
+    archiveFinishedTooltip: "归档已完成项",
   },
   panels: {
     draft: {
@@ -1359,6 +1378,33 @@ export const zhCN: TranslationResources = {
     subAgentActivity: "Sub-agent 活动",
     input: "输入",
     output: "输出",
+  },
+  toolCallGroup: {
+    editedFiles: {
+      one: "编辑了 {{count}} 个文件",
+      other: "编辑了 {{count}} 个文件",
+    },
+    commands: {
+      one: "运行了 {{count}} 个命令",
+      other: "运行了 {{count}} 个命令",
+    },
+    readFiles: {
+      one: "读取了 {{count}} 个文件",
+      other: "读取了 {{count}} 个文件",
+    },
+    searches: {
+      one: "搜索了 {{count}} 次",
+      other: "搜索了 {{count}} 次",
+    },
+    otherTools: {
+      one: "使用了 {{count}} 个其他工具",
+      other: "使用了 {{count}} 个其他工具",
+    },
+    paseoCalls: {
+      one: "调用了 Paseo {{count}} 次",
+      other: "调用了 Paseo {{count}} 次",
+    },
+    and: "并",
   },
   renameModal: {
     rename: "重命名",
@@ -1427,6 +1473,17 @@ export const zhCN: TranslationResources = {
     },
     general: {
       title: "通用",
+      browserData: {
+        title: "浏览器数据",
+        siteData: "Cookie 和网站数据",
+        description: "浏览器标签页在 Paseo 中共享登录状态和网站数据。",
+        clear: "清除浏览器数据",
+        clearing: "正在清除...",
+        confirmTitle: "清除浏览器数据？",
+        confirmMessage: "网站帐号将退出登录，打开的浏览器标签页将重新加载。",
+        success: "浏览器数据已清除。",
+        error: "无法清除浏览器数据。",
+      },
       defaultSend: {
         label: "默认发送",
         descriptions: {
@@ -1455,6 +1512,15 @@ export const zhCN: TranslationResources = {
       autoExpandReasoning: {
         label: "始终展开推理过程",
         description: "默认情况下完全展开 AI 的思考和推理过程",
+      },
+      toolCallDetail: {
+        label: "工具调用显示",
+        description: "工具调用在时间线中的显示方式",
+        accessibilityLabel: "选择工具调用显示方式（{{value}}）",
+        options: {
+          overview: "摘要",
+          detailed: "完整详情",
+        },
       },
       language: {
         label: "语言",

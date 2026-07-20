@@ -31,6 +31,9 @@ import {
   createFakeCodexAppServer,
   type FakeCodexAppServer,
   waitForNextPermission,
+  waitForNextTimelineItem,
+  waitForProviderSubagent,
+  waitForTimelineToolCall,
 } from "./codex/test-utils/fake-app-server.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { asInternals as castInternals, createStub } from "../../test-utils/class-mocks.js";
@@ -584,6 +587,215 @@ describe("Codex app-server provider", () => {
     expect(spawnedCwd).toBe(cwd);
     appServer.assertNoErrors();
     await session.close();
+  });
+
+  test("shows a successful shell command that produces no output", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      await session.connect();
+      const nextTimelineItem = waitForNextTimelineItem(session);
+
+      appServer.completesSilentCommand({
+        threadId: "thread-1",
+        callId: "silent-merge",
+        command: "gh pr merge 2030 --squash",
+        cwd: "/workspace/project",
+      });
+      appServer.says({ threadId: "thread-1", text: "Merged." });
+
+      await expect(nextTimelineItem).resolves.toEqual({
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "tool_call",
+          callId: "silent-merge",
+          name: "shell",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "shell",
+            command: "gh pr merge 2030 --squash",
+            cwd: "/workspace/project",
+            exitCode: 0,
+          },
+        },
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("shows a silent shell command from legacy live notifications", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      await session.connect();
+      const nextTimelineItem = waitForNextTimelineItem(session);
+
+      appServer.completesSilentLegacyCommand({
+        threadId: "thread-1",
+        callId: "legacy-silent-merge",
+        command: "gh pr merge 2030 --squash",
+        cwd: "/workspace/project",
+      });
+
+      await expect(nextTimelineItem).resolves.toEqual({
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "tool_call",
+          callId: "legacy-silent-merge",
+          name: "shell",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "shell",
+            command: "gh pr merge 2030 --squash",
+            cwd: "/workspace/project",
+            exitCode: 0,
+          },
+        },
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("shows the exact bytes Codex writes into an existing terminal", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      await session.connect();
+      const nextTimelineItem = waitForNextTimelineItem(session);
+
+      appServer.typesIntoTerminal({
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "interactive-shell",
+        processId: "4242",
+        text: "gh pr merge 2030 --squash\n",
+      });
+
+      await expect(nextTimelineItem).resolves.toEqual({
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "tool_call",
+          callId: "terminal-session-4242-1",
+          name: "terminal",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "plain_text",
+            text: "gh pr merge 2030 --squash\n",
+            icon: "square_terminal",
+          },
+          metadata: {
+            processId: "4242",
+          },
+        },
+      });
+
+      const relabeledTerminal = waitForTimelineToolCall(session, "terminal-session-4242-1");
+      appServer.runsLegacyCommand({
+        threadId: "thread-1",
+        callId: "interactive-shell",
+        command: "sleep 30",
+        output: "Process running with session id 4242",
+      });
+
+      await expect(relabeledTerminal).resolves.toEqual({
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "tool_call",
+          callId: "terminal-session-4242-1",
+          name: "terminal",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "plain_text",
+            label: "sleep 30",
+            text: "gh pr merge 2030 --squash\n",
+            icon: "square_terminal",
+          },
+          metadata: {
+            processId: "4242",
+          },
+        },
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("keeps repeated writes to one terminal as separate timeline rows", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      await session.connect();
+
+      const firstTimelineItem = waitForNextTimelineItem(session);
+      appServer.typesIntoTerminal({
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "interactive-shell",
+        processId: "4242",
+        text: "git status\n",
+      });
+
+      const secondTimelineItem = waitForNextTimelineItem(session);
+      appServer.typesIntoTerminal({
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "interactive-shell",
+        processId: "4242",
+        text: "git push\n",
+      });
+
+      const [first, second] = await Promise.all([firstTimelineItem, secondTimelineItem]);
+      expect(first.item).toMatchObject({
+        type: "tool_call",
+        callId: "terminal-session-4242-1",
+        detail: { type: "plain_text", text: "git status\n" },
+      });
+      expect(second.item).toMatchObject({
+        type: "tool_call",
+        callId: "terminal-session-4242-2",
+        detail: { type: "plain_text", text: "git push\n" },
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
   });
 
   test("surfaces an MCP elicitation and returns Codex's required approval action", async () => {
@@ -1733,6 +1945,60 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("updates a registered child with its later native activity name", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "collabAgentToolCall",
+        id: "call-native-name-later",
+        tool: "spawnAgent",
+        status: "completed",
+        prompt: "Inspect the repository.",
+        receiverThreadIds: ["child-native-name-later"],
+        agentsStates: {
+          "child-native-name-later": { status: "pendingInit", message: null },
+        },
+      },
+    });
+    asInternals(session).handleNotification("item/started", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "activity-native-name-later",
+        kind: "started",
+        agentThreadId: "child-native-name-later",
+        agentPath: "/root/research/investigator",
+      },
+    });
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "provider_subagent",
+        provider: "codex",
+        event: expect.objectContaining({
+          type: "upsert",
+          id: "child-native-name-later",
+          title: "Research / Investigator",
+        }),
+      }),
+    );
+    expect(events.at(-1)).toMatchObject({
+      type: "timeline",
+      item: {
+        callId: "call-native-name-later",
+        detail: {
+          type: "sub_agent",
+          subAgentType: "Research / Investigator",
+          description: "Inspect the repository.",
+        },
+      },
+    });
+  });
+
   test("renders child MCP image results in the provider subagent timeline", () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
@@ -2344,6 +2610,158 @@ describe("Codex app-server provider", () => {
     expect(events.filter((event) => event.type === "turn_completed")).toHaveLength(1);
   });
 
+  test("discovers a MultiAgentV2 child from a legacy-only lifecycle notification", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      const resultPromise = session.run("Delegate the investigation.");
+      await appServer.waitForTurnStart();
+      const child = waitForProviderSubagent(session, "legacy-only-child-thread");
+      const spawn = waitForTimelineToolCall(session, "spawn-legacy-only-child");
+
+      appServer.startsTurn({ threadId: "thread-1", turnId: "turn-with-legacy-only-child" });
+      appServer.startsLegacyOnlySubAgent({
+        callId: "spawn-legacy-only-child",
+        threadId: "legacy-only-child-thread",
+        agentPath: "/root/legacy-only-child",
+      });
+
+      await expect(child).resolves.toMatchObject({
+        type: "provider_subagent",
+        provider: "codex",
+        turnId: "codex-turn-0",
+        event: {
+          type: "upsert",
+          id: "legacy-only-child-thread",
+          status: "running",
+        },
+      });
+      await expect(spawn).resolves.toMatchObject({
+        type: "timeline",
+        provider: "codex",
+        turnId: "codex-turn-0",
+        item: {
+          type: "tool_call",
+          callId: "spawn-legacy-only-child",
+          status: "running",
+          detail: {
+            type: "sub_agent",
+            description: "legacy-only-child",
+          },
+        },
+      });
+
+      appServer.completeTurn();
+      await resultPromise;
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("reports when Codex rejects a foreground turn interrupt", async () => {
+    const appServer = createFakeCodexAppServer({
+      "turn/interrupt": async () => {
+        throw new Error("A foreground turn is already active");
+      },
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      const resultPromise = session.run("Wait for the child.");
+      await appServer.waitForTurnStart();
+      appServer.startsTurn({ threadId: "thread-1", turnId: "turn-waiting-for-child" });
+
+      await expect(session.interrupt()).rejects.toThrow("A foreground turn is already active");
+
+      appServer.completeTurn();
+      await resultPromise;
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("rejects an interrupt until Codex identifies the accepted turn", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      const resultPromise = session.run("Start working.");
+      await appServer.waitForTurnStart();
+
+      await expect(session.interrupt()).rejects.toThrow(
+        "Cannot interrupt Codex before turn/started identifies the active turn",
+      );
+
+      appServer.startsTurn({ threadId: "thread-1", turnId: "turn-identified-late" });
+      appServer.completeTurn();
+      await resultPromise;
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("rejects an interrupt before Codex initializes the thread", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    await expect(session.interrupt()).rejects.toThrow(
+      "Cannot interrupt Codex before the active thread is initialized",
+    );
+
+    await session.close();
+  });
+
+  test("interrupts an autonomous Codex turn identified by live notifications", async () => {
+    const session = createSession();
+    const requests: Array<{ method: string; params: unknown }> = [];
+    session.activeForegroundTurnId = null;
+    session.client = {
+      request: async (method, params) => {
+        requests.push({ method, params });
+        return {};
+      },
+    };
+
+    asInternals(session).handleNotification("turn/started", {
+      threadId: "test-thread",
+      turn: { id: "autonomous-turn" },
+    });
+
+    await session.interrupt();
+
+    expect(requests).toContainEqual({
+      method: "turn/interrupt",
+      params: {
+        threadId: "test-thread",
+        turnId: "autonomous-turn",
+      },
+    });
+  });
+
   test("never replaces the root identity with an early child thread start", () => {
     const session = createSession();
 
@@ -2615,6 +3033,13 @@ describe("Codex app-server provider", () => {
                   },
                   {
                     type: "subAgentActivity",
+                    id: "legacy-native-name-history",
+                    kind: "started",
+                    agentThreadId: "legacy-child-thread",
+                    agentPath: "/root/sentinel_child",
+                  },
+                  {
+                    type: "subAgentActivity",
                     id: "v2-spawn-history",
                     kind: "started",
                     agentThreadId: "v2-child-thread",
@@ -2639,7 +3064,12 @@ describe("Codex app-server provider", () => {
         event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
       ),
     ).toMatchObject([
-      { type: "upsert", id: "legacy-child-thread", status: "completed" },
+      {
+        type: "upsert",
+        id: "legacy-child-thread",
+        status: "completed",
+        title: "Sentinel child",
+      },
       { type: "upsert", id: "v2-child-thread", status: "completed" },
     ]);
     expect(
@@ -2674,12 +3104,16 @@ describe("Codex app-server provider", () => {
       {
         callId: "legacy-spawn-history",
         status: "completed",
-        detail: { type: "sub_agent", description: "Legacy child" },
+        detail: {
+          type: "sub_agent",
+          description: "Legacy child",
+          subAgentType: "Sentinel child",
+        },
       },
       {
         callId: "v2-spawn-history",
         status: "completed",
-        detail: { type: "sub_agent", description: "/root/v2-child" },
+        detail: { type: "sub_agent", description: "v2-child" },
       },
     ]);
 
@@ -2801,7 +3235,7 @@ describe("Codex app-server provider", () => {
           status: "canceled",
           detail: expect.objectContaining({
             type: "sub_agent",
-            description: "/root/history-child",
+            description: "history-child",
           }),
         }),
       },
@@ -3402,7 +3836,7 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("emits imageView thread items as assistant markdown images using the path", () => {
+  test("emits imageView paths with spaces as valid assistant markdown images", () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
@@ -3422,15 +3856,15 @@ describe("Codex app-server provider", () => {
         turnId: "test-turn",
         item: {
           type: "assistant_message",
-          text: "![Image](/tmp/paseo image.png)",
+          text: "![Image](file:///tmp/paseo%20image.png)",
         },
       },
     ]);
   });
 
   test.each([
-    ["savedPath", { savedPath: "/tmp/generated-camel.png" }, "/tmp/generated-camel.png"],
-    ["saved_path", { saved_path: "/tmp/generated-snake.png" }, "/tmp/generated-snake.png"],
+    ["savedPath", { savedPath: "/tmp/generated-camel.png" }, "file:///tmp/generated-camel.png"],
+    ["saved_path", { saved_path: "/tmp/generated-snake.png" }, "file:///tmp/generated-snake.png"],
   ])(
     "emits imageGeneration thread items with %s as assistant markdown images",
     (_fieldName, imageFields, expectedPath) => {

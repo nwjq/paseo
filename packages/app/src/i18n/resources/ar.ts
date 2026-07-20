@@ -54,12 +54,13 @@ export const ar: TranslationResources = {
       close: "إغلاق القائمة",
     },
     commandCenter: {
-      placeholder: "اكتب أمرًا أو وكلاء بحث...",
+      placeholder: "ابحث في الأوامر ومساحات العمل والوكلاء...",
       noMatches: "لا توجد مباريات",
       actions: "الإجراءات",
+      workspaces: "مساحات العمل",
       agents: "الوكلاء",
       newAgent: "وكيل جديد",
-      openProject: "مشروع مفتوح",
+      addProject: "إضافة مشروع",
       home: "بيت",
     },
   },
@@ -774,6 +775,9 @@ export const ar: TranslationResources = {
     },
   },
   sidebar: {
+    pinned: {
+      title: "المثبتة",
+    },
     host: {
       noHost: "لا مضيف",
       switchTitle: "تبديل المضيف",
@@ -786,6 +790,17 @@ export const ar: TranslationResources = {
       home: "بيت",
       settings: "إعدادات",
       closeSidebar: "إغلاق الشريط الجانبي",
+    },
+    help: {
+      trigger: "المساعدة والدعم",
+      sectionHelp: "المساعدة",
+      diagnostics: "تشغيل التشخيص",
+      shortcuts: "اختصارات لوحة المفاتيح",
+      reportIssue: "الإبلاغ عن مشكلة",
+      discord: "Discord",
+      github: "إنشاء مشكلة على GitHub",
+      whatsNew: "ما الجديد",
+      version: "Paseo {{version}}",
     },
     sections: {
       sessions: "السجل",
@@ -835,6 +850,8 @@ export const ar: TranslationResources = {
         copyPath: "نسخ المسار",
         copyBranchName: "انسخ اسم الفرع",
         rename: "إعادة تسمية مساحة العمل",
+        pin: "تثبيت في الأعلى",
+        unpin: "إلغاء التثبيت",
         archive: "أرشيف",
         archiveWorkspace: "أرشفة مساحة العمل",
         hideFromSidebar: "إخفاء من الشريط الجانبي",
@@ -1354,6 +1371,8 @@ export const ar: TranslationResources = {
     detachTooltip: "فصل الوكيل الفرعي",
     archiveAction: "أرشيف{{label}}",
     archiveTooltip: "أرشفة الوكيل الفرعي",
+    archiveFinishedAction: "أرشفة الوكلاء الفرعيين المكتملين",
+    archiveFinishedTooltip: "أرشفة المكتملين",
   },
   panels: {
     draft: {
@@ -1375,6 +1394,33 @@ export const ar: TranslationResources = {
     subAgentActivity: "نشاط الوكيل الفرعي",
     input: "مدخل",
     output: "الإخراج",
+  },
+  toolCallGroup: {
+    editedFiles: {
+      one: "حرّر {{count}} ملفًا",
+      other: "حرّر {{count}} ملفات",
+    },
+    commands: {
+      one: "شغّل {{count}} أمرًا",
+      other: "شغّل {{count}} أوامر",
+    },
+    readFiles: {
+      one: "قرأ {{count}} ملفًا",
+      other: "قرأ {{count}} ملفات",
+    },
+    searches: {
+      one: "بحث {{count}} مرة",
+      other: "بحث {{count}} مرات",
+    },
+    otherTools: {
+      one: "استخدم {{count}} أداة أخرى",
+      other: "استخدم {{count}} أدوات أخرى",
+    },
+    paseoCalls: {
+      one: "استدعى Paseo {{count}} مرة",
+      other: "استدعى Paseo {{count}} مرات",
+    },
+    and: "و",
   },
   renameModal: {
     rename: "إعادة تسمية",
@@ -1443,6 +1489,17 @@ export const ar: TranslationResources = {
     },
     general: {
       title: "عام",
+      browserData: {
+        title: "بيانات المتصفح",
+        siteData: "ملفات تعريف الارتباط وبيانات المواقع",
+        description: "تتشارك علامات تبويب المتصفح تسجيلات الدخول وبيانات المواقع عبر Paseo.",
+        clear: "مسح بيانات المتصفح",
+        clearing: "جارٍ المسح...",
+        confirmTitle: "هل تريد مسح بيانات المتصفح؟",
+        confirmMessage: "سيتم تسجيل خروجك من المواقع وإعادة تحميل علامات تبويب المتصفح المفتوحة.",
+        success: "تم مسح بيانات المتصفح.",
+        error: "تعذر مسح بيانات المتصفح.",
+      },
       defaultSend: {
         label: "إرسال افتراضي",
         descriptions: {
@@ -1472,6 +1529,15 @@ export const ar: TranslationResources = {
       autoExpandReasoning: {
         label: "عرض التفكير دائماً",
         description: "إظهار تفكير الوكيل وخطوات الاستدلال بشكل كامل بشكل افتراضي",
+      },
+      toolCallDetail: {
+        label: "عرض استدعاءات الأدوات",
+        description: "كيفية ظهور استدعاءات الأدوات في المخطط الزمني",
+        accessibilityLabel: "حدد عرض استدعاءات الأدوات ({{value}})",
+        options: {
+          overview: "ملخص",
+          detailed: "التفاصيل الكاملة",
+        },
       },
       language: {
         label: "لغة",

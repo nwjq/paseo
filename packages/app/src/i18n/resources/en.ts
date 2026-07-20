@@ -52,12 +52,13 @@ export const en = {
       close: "Close menu",
     },
     commandCenter: {
-      placeholder: "Type a command or search agents...",
+      placeholder: "Search commands, workspaces, and agents...",
       noMatches: "No matches",
       actions: "Actions",
+      workspaces: "Workspaces",
       agents: "Agents",
       newAgent: "New agent",
-      openProject: "Open project",
+      addProject: "Add project",
       home: "Home",
     },
   },
@@ -781,6 +782,9 @@ export const en = {
     },
   },
   sidebar: {
+    pinned: {
+      title: "Pinned",
+    },
     host: {
       noHost: "No host",
       switchTitle: "Switch host",
@@ -793,6 +797,17 @@ export const en = {
       home: "Home",
       settings: "Settings",
       closeSidebar: "Close sidebar",
+    },
+    help: {
+      trigger: "Help and support",
+      sectionHelp: "Help",
+      diagnostics: "Run diagnostics",
+      shortcuts: "Keyboard shortcuts",
+      reportIssue: "Report an issue",
+      discord: "Discord",
+      github: "Create GitHub issue",
+      whatsNew: "What's new",
+      version: "Paseo {{version}}",
     },
     sections: {
       sessions: "History",
@@ -842,6 +857,8 @@ export const en = {
         copyPath: "Copy path",
         copyBranchName: "Copy branch name",
         rename: "Rename workspace",
+        pin: "Pin to top",
+        unpin: "Unpin",
         archive: "Archive",
         archiveWorkspace: "Archive workspace",
         hideFromSidebar: "Hide from sidebar",
@@ -1362,6 +1379,8 @@ export const en = {
     detachTooltip: "Detach subagent",
     archiveAction: "Archive {{label}}",
     archiveTooltip: "Archive subagent",
+    archiveFinishedAction: "Archive finished subagents",
+    archiveFinishedTooltip: "Archive finished",
   },
   panels: {
     draft: {
@@ -1383,6 +1402,33 @@ export const en = {
     subAgentActivity: "Sub-agent activity",
     input: "Input",
     output: "Output",
+  },
+  toolCallGroup: {
+    editedFiles: {
+      one: "edited {{count}} file",
+      other: "edited {{count}} files",
+    },
+    commands: {
+      one: "ran {{count}} command",
+      other: "ran {{count}} commands",
+    },
+    readFiles: {
+      one: "read {{count}} file",
+      other: "read {{count}} files",
+    },
+    searches: {
+      one: "searched {{count}} time",
+      other: "searched {{count}} times",
+    },
+    otherTools: {
+      one: "used {{count}} other tool",
+      other: "used {{count}} other tools",
+    },
+    paseoCalls: {
+      one: "called Paseo {{count}} time",
+      other: "called Paseo {{count}} times",
+    },
+    and: "and",
   },
   renameModal: {
     rename: "Rename",
@@ -1451,6 +1497,17 @@ export const en = {
     },
     general: {
       title: "General",
+      browserData: {
+        title: "Browser data",
+        siteData: "Cookies and site data",
+        description: "Browser tabs share sign-ins and site data across Paseo.",
+        clear: "Clear browser data",
+        clearing: "Clearing...",
+        confirmTitle: "Clear browser data?",
+        confirmMessage: "Sites will be signed out and open browser tabs will reload.",
+        success: "Browser data cleared.",
+        error: "Couldn't clear browser data.",
+      },
       defaultSend: {
         label: "Default send",
         descriptions: {
@@ -1479,6 +1536,15 @@ export const en = {
       autoExpandReasoning: {
         label: "Always expand reasoning",
         description: "Show agent thinking and chain-of-thought blocks fully expanded by default",
+      },
+      toolCallDetail: {
+        label: "Tool call display",
+        description: "How tool calls appear in the timeline",
+        accessibilityLabel: "Select tool call display ({{value}})",
+        options: {
+          overview: "Summary",
+          detailed: "Full detail",
+        },
       },
       language: {
         label: "Language",
