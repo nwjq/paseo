@@ -97,7 +97,7 @@ describe("buildWorkspaceArchiveRedirectRoute", () => {
         workspaces,
       }),
     ).toBe(
-      "/h/server-1/new?dir=%2Frepo%2F.paseo%2Fworktrees%2Ffeature%2Fpackages%2Fapp&name=Project&projectId=project-1",
+      "/new?serverId=server-1&dir=%2Frepo%2F.paseo%2Fworktrees%2Ffeature%2Fpackages%2Fapp&name=Project&projectId=project-1",
     );
   });
 });

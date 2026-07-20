@@ -18,7 +18,7 @@ export function buildWorkspaceArchiveRedirectRoute(input: {
   const archivedWorkspace =
     Array.from(input.workspaces).find((workspace) => workspace.id === archivedWorkspaceId) ?? null;
   const sourceDirectory =
-    archivedWorkspace?.projectRootPath || archivedWorkspace?.workspaceDirectory;
+    archivedWorkspace?.workspaceDirectory || archivedWorkspace?.projectRootPath;
   if (!sourceDirectory) {
     return buildHostRootRoute(input.serverId);
   }
