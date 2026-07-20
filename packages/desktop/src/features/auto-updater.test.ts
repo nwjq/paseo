@@ -214,6 +214,7 @@ describe("shouldAdmitToRollout", () => {
       latestVersion: "0.1.72",
       body: null,
       date: null,
+      errorMessage: null,
     });
   });
 
