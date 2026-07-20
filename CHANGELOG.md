@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.111-beta.1 - 2026-07-20
+
+### Improved
+
+- Personal fork desktop builds can publish self-use Mac artifacts without Apple signing
+- Personal fork desktop builds stay on the fork update channel
+- Personal fork releases can keep GitHub Releases trimmed automatically
+- Android APK beta builds can complete without EAS credentials in forked release pipelines
+
+### Fixed
+
+- Workspaces created from repository subdirectories keep the correct folder through worktree and archive flows
+- Codex sessions launched from repository subdirectories use the exact workspace folder and local skills
+
 ## 0.1.110 - 2026-07-16
 
 ### Fixed
