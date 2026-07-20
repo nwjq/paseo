@@ -23,7 +23,8 @@ import {
 
 // No Playwright Electron runner exists; we simulate the desktop bridge via
 // addInitScript so Electron-gated UI activates without a real Electron process.
-test.describe("Desktop updates", () => {
+// This fork intentionally disables desktop app updates in both the renderer and main process.
+test.describe.skip("Desktop updates", () => {
   test("update banner appears in the sidebar when an app update is available", async ({ page }) => {
     await injectDesktopBridge(page, {
       serverId: getServerId(),

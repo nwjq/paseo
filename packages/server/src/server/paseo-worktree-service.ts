@@ -222,10 +222,8 @@ function resolveWorktreeWorkspaceDirectory(options: {
   }
 
   const mapped = resolve(normalizedWorktreePath, rel);
-  const rootPrefix = normalizedWorktreePath.endsWith("/")
-    ? normalizedWorktreePath
-    : `${normalizedWorktreePath}/`;
-  if (mapped !== normalizedWorktreePath && !mapped.startsWith(rootPrefix)) {
+  const mappedRelative = relative(normalizedWorktreePath, mapped);
+  if (mappedRelative.startsWith("..") || isAbsolute(mappedRelative)) {
     return normalizedWorktreePath;
   }
   return mapped;
