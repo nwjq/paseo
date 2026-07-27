@@ -1,24 +1,22 @@
+import { stat } from "node:fs/promises";
+import { resolve } from "node:path";
+
 import type { WorkspaceGitService } from "./workspace-git-service.js";
-import { resolve, relative, isAbsolute } from "node:path";
-import { realpathSync } from "node:fs";
-import {
-  type PersistedWorkspaceRecord,
-  type ProjectRegistry,
-  type WorkspaceRegistry,
-  createPersistedProjectRecord,
-  createPersistedWorkspaceRecord,
-} from "./workspace-registry.js";
-import {
-  classifyDirectoryForProjectMembership,
-  deriveProjectGroupingName,
-  generateWorkspaceId,
-} from "./workspace-registry-model.js";
+import { areEquivalentPaths, getRealpathAwareRelativePath } from "../utils/path.js";
+import type { PersistedWorkspaceRecord, WorkspaceRegistry } from "./workspace-registry.js";
+import type { WorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
 import {
   createWorktreeCore,
   type CreateWorktreeCoreDeps,
   type CreateWorktreeCoreInput,
 } from "./worktree-core.js";
-import { validateBranchSlug, type WorktreeConfig } from "../utils/worktree.js";
+import {
+  mapWorkspaceRelativeCwdToWorktree,
+  rollbackCreatedPaseoWorktree,
+  seedPaseoConfigFile,
+  validateBranchSlug,
+  type WorktreeConfig,
+} from "../utils/worktree.js";
 import { getCurrentBranch, localBranchExists, renameCurrentBranch } from "../utils/checkout-git.js";
 import {
   markPaseoWorktreeFirstAgentBranchAutoNameAttempted,
@@ -33,6 +31,7 @@ import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 
 export interface CreatePaseoWorktreeInput extends CreateWorktreeCoreInput {
   projectId?: string;
+  title?: string;
 }
 
 export interface CreatePaseoWorktreeResult {
@@ -57,36 +56,135 @@ export interface AttemptFirstAgentBranchAutoNameResult {
 }
 
 export interface CreatePaseoWorktreeDeps extends CreateWorktreeCoreDeps {
-  projectRegistry: Pick<ProjectRegistry, "get" | "upsert">;
-  workspaceRegistry: Pick<WorkspaceRegistry, "get" | "list" | "upsert">;
   workspaceGitService: WorkspaceGitService;
+  workspaceRegistry: Pick<WorkspaceRegistry, "list">;
+  workspaceProvisioning: Pick<WorkspaceProvisioningService, "createWorkspaceForWorktree">;
 }
 
 export async function createPaseoWorktree(
   input: CreatePaseoWorktreeInput,
   deps: CreatePaseoWorktreeDeps,
 ): Promise<CreatePaseoWorktreeResult> {
+  const workspaceCwdPlan = await planWorkspaceCwdForWorktree(
+    {
+      cwd: input.cwd,
+      projectId: input.projectId,
+      workspaceRegistry: deps.workspaceRegistry,
+    },
+    deps.workspaceGitService,
+  );
   const createdWorktree = await createWorktreeCore(input, deps);
-  maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree });
-  const workspace = await upsertWorkspaceForWorktree({
-    inputCwd: input.cwd,
+  try {
+    maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree });
+    const workspaceCwd = mapWorkspaceRelativeCwdToWorktree({
+      relativeWorkspaceCwd: workspaceCwdPlan.relativeWorkspaceCwd,
+      targetWorktreePath: createdWorktree.worktree.worktreePath,
+    });
+    if (!(await isDirectory(workspaceCwd))) {
+      throw new Error(`Selected project directory is missing from the worktree: ${workspaceCwd}`);
+    }
+
+    if (createdWorktree.created) {
+      await seedPaseoConfigFile({
+        sourceCwd: workspaceCwdPlan.inputCwd,
+        targetCwd: workspaceCwd,
+      });
+    }
+    const workspace = await deps.workspaceProvisioning.createWorkspaceForWorktree({
+      sourceCwd: workspaceCwdPlan.inputCwd,
+      projectId: input.projectId,
+      repoRoot: createdWorktree.repoRoot,
+      cwd: workspaceCwd,
+      worktreeRoot: createdWorktree.worktree.worktreePath,
+      branch: createdWorktree.worktree.branchName || null,
+      baseBranch: resolveIntentBaseBranch(createdWorktree.intent),
+      title: input.title?.trim() || resolveFirstAgentPromptTitle(input.firstAgentContext),
+      expectsInitialAgent: Boolean(input.firstAgentContext),
+    });
+
+    deps.github.invalidate({ cwd: createdWorktree.worktree.worktreePath });
+
+    return {
+      worktree: createdWorktree.worktree,
+      intent: createdWorktree.intent,
+      workspace,
+      repoRoot: createdWorktree.repoRoot,
+      created: createdWorktree.created,
+    };
+  } catch (error) {
+    if (!createdWorktree.created) {
+      throw error;
+    }
+    return rollbackCreatedPaseoWorktree(
+      {
+        cwd: createdWorktree.repoRoot,
+        worktreePath: createdWorktree.worktree.worktreePath,
+        ...(input.runSetup === false ? { teardownCwds: [] } : {}),
+        paseoHome: input.paseoHome,
+        worktreesBaseRoot: input.worktreesRoot,
+      },
+      error,
+    );
+  }
+}
+
+async function isDirectory(targetPath: string): Promise<boolean> {
+  try {
+    return (await stat(targetPath)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+async function planWorkspaceCwdForWorktree(
+  input: {
+    cwd: string;
+    projectId?: string;
+    workspaceRegistry: Pick<WorkspaceRegistry, "list">;
+  },
+  workspaceGitService: Pick<WorkspaceGitService, "getCheckout">,
+): Promise<{ inputCwd: string; relativeWorkspaceCwd: string }> {
+  const requestedCwd = resolve(input.cwd);
+  const requestedCheckout = await workspaceGitService.getCheckout(requestedCwd);
+  const requestedWorktreePath = requestedCheckout.worktreeRoot ?? requestedCwd;
+  const sourceWorkspace = await findSourceWorkspaceForWorktree({
+    inputCwd: requestedCwd,
     projectId: input.projectId,
-    repoRoot: createdWorktree.repoRoot,
-    worktree: createdWorktree.worktree,
-    baseBranch: resolveIntentBaseBranch(createdWorktree.intent),
-    title: resolveFirstAgentPromptTitle(input.firstAgentContext),
-    deps,
+    repoRoot: requestedWorktreePath,
+    workspaceRegistry: input.workspaceRegistry,
   });
+  const normalizedInputCwd = resolve(sourceWorkspace?.cwd ?? requestedCwd);
+  const sourceCheckout = areEquivalentPaths(normalizedInputCwd, requestedCwd)
+    ? requestedCheckout
+    : await workspaceGitService.getCheckout(normalizedInputCwd);
+  const sourceWorktreePath = sourceCheckout.worktreeRoot ?? normalizedInputCwd;
+  const relativeWorkspaceCwd = getRealpathAwareRelativePath(sourceWorktreePath, normalizedInputCwd);
+  if (relativeWorkspaceCwd === null) {
+    throw new Error(`Workspace cwd is outside its source worktree: ${normalizedInputCwd}`);
+  }
+  return { inputCwd: normalizedInputCwd, relativeWorkspaceCwd };
+}
 
-  deps.github.invalidate({ cwd: createdWorktree.worktree.worktreePath });
-
-  return {
-    worktree: createdWorktree.worktree,
-    intent: createdWorktree.intent,
-    workspace,
-    repoRoot: createdWorktree.repoRoot,
-    created: createdWorktree.created,
-  };
+async function findSourceWorkspaceForWorktree(options: {
+  inputCwd: string;
+  projectId?: string;
+  repoRoot: string;
+  workspaceRegistry: Pick<WorkspaceRegistry, "list">;
+}): Promise<PersistedWorkspaceRecord | null> {
+  const workspaces = await options.workspaceRegistry.list();
+  const active = workspaces.filter((ws) => !ws.archivedAt && ws.kind !== "worktree");
+  if (options.projectId) {
+    const candidates = active.filter((ws) => ws.projectId === options.projectId);
+    if (candidates.length === 1) return candidates[0];
+    if (candidates.length > 1) {
+      return candidates.reduce((a, b) => (a.updatedAt > b.updatedAt ? a : b));
+    }
+  }
+  return (
+    active.find((ws) => areEquivalentPaths(ws.cwd, options.inputCwd)) ??
+    active.find((ws) => areEquivalentPaths(ws.cwd, options.repoRoot)) ??
+    null
+  );
 }
 
 export async function attemptFirstAgentBranchAutoName(options: {
@@ -200,345 +298,17 @@ function maybeMarkFirstAgentBranchAutoNameEligible(options: {
   });
 }
 
-function resolveWorktreeWorkspaceDirectory(options: {
-  inputCwd: string;
-  sourceRepoRoot: string;
-  worktreePath: string;
-}): string {
-  const normalizedWorktreePath = resolve(options.worktreePath);
-
-  let compInputCwd = resolve(options.inputCwd);
-  let compSourceRepoRoot = resolve(options.sourceRepoRoot);
-  try {
-    compInputCwd = realpathSync.native(compInputCwd);
-  } catch {}
-  try {
-    compSourceRepoRoot = realpathSync.native(compSourceRepoRoot);
-  } catch {}
-
-  const rel = relative(compSourceRepoRoot, compInputCwd);
-  if (!rel || rel === "." || rel.startsWith("..") || isAbsolute(rel)) {
-    return normalizedWorktreePath;
-  }
-
-  const mapped = resolve(normalizedWorktreePath, rel);
-  const mappedRelative = relative(normalizedWorktreePath, mapped);
-  if (mappedRelative.startsWith("..") || isAbsolute(mappedRelative)) {
-    return normalizedWorktreePath;
-  }
-  return mapped;
-}
-
+// The base branch is normalized to match worktree.json's baseRefName (origin/
+// stripped). checkout-branch worktrees have no distinct base, so they stay null.
 function resolveIntentBaseBranch(intent: WorktreeCreationIntent): string | null {
   switch (intent.kind) {
     case "branch-off":
       return normalizeBaseRefName(intent.baseBranch);
+    case "checkout-change-request":
+      return normalizeBaseRefName(intent.baseRefName);
     case "checkout-github-pr":
       return normalizeBaseRefName(intent.baseRefName);
     case "checkout-branch":
       return null;
   }
-}
-
-async function upsertWorkspaceForWorktree(options: {
-  inputCwd: string;
-  projectId?: string;
-  repoRoot: string;
-  worktree: WorktreeConfig;
-  baseBranch?: string | null;
-  title?: string | null;
-  deps: Pick<
-    CreatePaseoWorktreeDeps,
-    "projectRegistry" | "workspaceRegistry" | "workspaceGitService"
-  >;
-}): Promise<PersistedWorkspaceRecord> {
-  const normalizedInputCwd = resolve(options.inputCwd);
-  const normalizedRepoRoot = resolve(options.repoRoot);
-
-  const sourceWorkspace = await findSourceWorkspaceForWorktree({
-    inputCwd: normalizedInputCwd,
-    projectId: options.projectId,
-    repoRoot: normalizedRepoRoot,
-    workspaceRegistry: options.deps.workspaceRegistry,
-  });
-  const effectiveInputCwd = sourceWorkspace?.cwd ?? normalizedInputCwd;
-  const sourceRepoRoot = await resolveSourceRepoRoot(
-    effectiveInputCwd,
-    options.deps.workspaceGitService,
-  );
-  const normalizedCwd = resolveWorktreeWorkspaceDirectory({
-    inputCwd: effectiveInputCwd,
-    sourceRepoRoot,
-    worktreePath: options.worktree.worktreePath,
-  });
-  // Creation never deduplicates by directory: a worktree directory may back
-  // more than one workspace. We still resolve the source project from the
-  // originating checkout, but always mint a fresh workspace record.
-  const sourceProject = await resolveSourceProjectForWorktree({
-    inputCwd: normalizedInputCwd,
-    projectId: options.projectId,
-    repoRoot: normalizedRepoRoot,
-    existingWorkspace: null,
-    deps: options.deps,
-  });
-  const workspaceId = generateWorkspaceId();
-  const now = new Date().toISOString();
-
-  await options.deps.projectRegistry.upsert(
-    createPersistedProjectRecord({
-      projectId: sourceProject.projectId,
-      rootPath: sourceProject.rootPath,
-      kind: sourceProject.kind,
-      displayName: sourceProject.displayName,
-      customName: sourceProject.customName,
-      createdAt: sourceProject.createdAt ?? now,
-      updatedAt: now,
-      archivedAt: null,
-    }),
-  );
-
-  const workspace = createPersistedWorkspaceRecord({
-    workspaceId,
-    projectId: sourceProject.projectId,
-    cwd: normalizedCwd,
-    kind: "worktree",
-    displayName: options.worktree.branchName || normalizedCwd,
-    branch: options.worktree.branchName || null,
-    baseBranch: options.baseBranch ?? null,
-    title: options.title ?? null,
-    createdAt: now,
-    updatedAt: now,
-    archivedAt: null,
-  });
-
-  await options.deps.workspaceRegistry.upsert(workspace);
-  return (await options.deps.workspaceRegistry.get(workspace.workspaceId)) ?? workspace;
-}
-
-export interface CreateLocalCheckoutWorkspaceDeps {
-  projectRegistry: Pick<ProjectRegistry, "get" | "list" | "upsert">;
-  workspaceRegistry: Pick<WorkspaceRegistry, "list" | "upsert">;
-  workspaceGitService: Pick<WorkspaceGitService, "getCheckout">;
-}
-
-// Always create a NEW workspace record backed by the existing directory `cwd`.
-// Never reuses a same-cwd record: a directory may back any number of
-// workspaces. Used by explicit user creation.
-export async function createLocalCheckoutWorkspace(
-  options: { cwd: string; title?: string | null },
-  deps: CreateLocalCheckoutWorkspaceDeps,
-): Promise<PersistedWorkspaceRecord> {
-  const normalizedCwd = resolve(options.cwd);
-  const checkout = await deps.workspaceGitService.getCheckout(normalizedCwd);
-  const membership = classifyDirectoryForProjectMembership({ cwd: normalizedCwd, checkout });
-  const now = new Date().toISOString();
-  const projectRecord = await resolveProjectRecordForMembership({
-    membership,
-    timestamp: now,
-    projectRegistry: deps.projectRegistry,
-  });
-  await deps.projectRegistry.upsert(projectRecord);
-
-  const trimmedTitle = options.title?.trim();
-  // Persist the live git branch into the dedicated `branch` field so
-  // buildWorkspaceCheckout reports the real branch for directory/local_checkout
-  // workspaces too (it reads workspace.branch). Same source deriveWorkspaceDisplayName
-  // reads. HEAD/detached resolves to null — there is no branch to report.
-  const currentBranch = checkout.currentBranch?.trim() ?? null;
-  const branch = currentBranch && currentBranch.toUpperCase() !== "HEAD" ? currentBranch : null;
-  const workspace = createPersistedWorkspaceRecord({
-    workspaceId: generateWorkspaceId(),
-    projectId: projectRecord.projectId,
-    cwd: normalizedCwd,
-    kind: membership.workspaceKind,
-    displayName: membership.workspaceDisplayName,
-    branch,
-    title: trimmedTitle ? trimmedTitle : null,
-    createdAt: now,
-    updatedAt: now,
-  });
-  await deps.workspaceRegistry.upsert(workspace);
-  return workspace;
-}
-
-async function resolveProjectRecordForMembership(options: {
-  membership: ReturnType<typeof classifyDirectoryForProjectMembership>;
-  timestamp: string;
-  projectRegistry: Pick<ProjectRegistry, "get" | "list">;
-}) {
-  const rootPath = options.membership.projectRootPath;
-  const projects = await options.projectRegistry.list();
-  const existingProject =
-    projects.find((project) => !project.archivedAt && project.rootPath === rootPath) ??
-    projects.find((project) => project.rootPath === rootPath) ??
-    null;
-
-  if (!existingProject) {
-    return createPersistedProjectRecord({
-      projectId: options.membership.projectKey,
-      rootPath,
-      kind: options.membership.projectKind,
-      displayName: options.membership.projectName,
-      createdAt: options.timestamp,
-      updatedAt: options.timestamp,
-    });
-  }
-
-  return {
-    ...existingProject,
-    rootPath,
-    kind: options.membership.projectKind,
-    archivedAt: null,
-    updatedAt: options.timestamp,
-  };
-}
-
-interface SourceProjectForWorktree {
-  projectId: string;
-  rootPath: string;
-  kind: "git";
-  displayName: string;
-  customName: string | null;
-  createdAt: string | null;
-}
-
-function sourceProjectFromRecord(record: {
-  projectId: string;
-  rootPath: string;
-  displayName: string;
-  customName?: string | null;
-  createdAt?: string | null;
-}): SourceProjectForWorktree {
-  return {
-    projectId: record.projectId,
-    rootPath: record.rootPath,
-    kind: "git",
-    displayName: record.displayName,
-    customName: record.customName ?? null,
-    createdAt: record.createdAt ?? null,
-  };
-}
-
-async function resolveExplicitProjectForWorktree(options: {
-  projectId: string;
-  projectRegistry: Pick<ProjectRegistry, "get">;
-}): Promise<SourceProjectForWorktree> {
-  const project = await options.projectRegistry.get(options.projectId);
-  if (!project || project.archivedAt) {
-    throw new Error(`Project not found for worktree: ${options.projectId}`);
-  }
-  return sourceProjectFromRecord(project);
-}
-
-async function resolveWorkspaceProjectForWorktree(options: {
-  sourceWorkspace: PersistedWorkspaceRecord;
-  repoRoot: string;
-  projectRegistry: Pick<ProjectRegistry, "get">;
-}): Promise<SourceProjectForWorktree> {
-  const sourceProject = await options.projectRegistry.get(options.sourceWorkspace.projectId);
-  return sourceProjectFromRecord({
-    projectId: options.sourceWorkspace.projectId,
-    rootPath: sourceProject?.rootPath ?? options.repoRoot,
-    displayName:
-      sourceProject?.displayName ?? deriveProjectGroupingName(options.sourceWorkspace.projectId),
-    customName: sourceProject?.customName ?? null,
-    createdAt: sourceProject?.createdAt ?? null,
-  });
-}
-
-async function resolveFallbackProjectForWorktree(options: {
-  repoRoot: string;
-  projectRegistry: Pick<ProjectRegistry, "get">;
-}): Promise<SourceProjectForWorktree> {
-  const existingFallbackProject = await options.projectRegistry.get(options.repoRoot);
-  return sourceProjectFromRecord({
-    projectId: options.repoRoot,
-    rootPath: existingFallbackProject?.rootPath ?? options.repoRoot,
-    displayName:
-      existingFallbackProject?.displayName ?? deriveProjectGroupingName(options.repoRoot),
-    customName: existingFallbackProject?.customName ?? null,
-    createdAt: existingFallbackProject?.createdAt ?? null,
-  });
-}
-
-async function resolveSourceProjectForWorktree(options: {
-  inputCwd: string;
-  projectId?: string;
-  repoRoot: string;
-  existingWorkspace: PersistedWorkspaceRecord | null;
-  deps: Pick<CreatePaseoWorktreeDeps, "projectRegistry" | "workspaceRegistry">;
-}): Promise<SourceProjectForWorktree> {
-  if (options.projectId) {
-    return resolveExplicitProjectForWorktree({
-      projectId: options.projectId,
-      projectRegistry: options.deps.projectRegistry,
-    });
-  }
-
-  const sourceWorkspace =
-    options.existingWorkspace ??
-    (await findWorkspaceForSource({
-      inputCwd: options.inputCwd,
-      repoRoot: options.repoRoot,
-      workspaceRegistry: options.deps.workspaceRegistry,
-    }));
-
-  if (sourceWorkspace) {
-    return resolveWorkspaceProjectForWorktree({
-      sourceWorkspace,
-      repoRoot: options.repoRoot,
-      projectRegistry: options.deps.projectRegistry,
-    });
-  }
-
-  return resolveFallbackProjectForWorktree({
-    repoRoot: options.repoRoot,
-    projectRegistry: options.deps.projectRegistry,
-  });
-}
-
-async function resolveSourceRepoRoot(
-  cwd: string,
-  workspaceGitService: WorkspaceGitService,
-): Promise<string> {
-  try {
-    return await workspaceGitService.resolveRepoRoot(cwd);
-  } catch {
-    return resolve(cwd);
-  }
-}
-
-async function findSourceWorkspaceForWorktree(options: {
-  inputCwd: string;
-  projectId?: string;
-  repoRoot: string;
-  workspaceRegistry: Pick<WorkspaceRegistry, "list">;
-}): Promise<PersistedWorkspaceRecord | null> {
-  const workspaces = await options.workspaceRegistry.list();
-  const active = workspaces.filter((ws) => !ws.archivedAt && ws.kind !== "worktree");
-  if (options.projectId) {
-    const candidates = active.filter((ws) => ws.projectId === options.projectId);
-    if (candidates.length === 1) return candidates[0];
-    if (candidates.length > 1) {
-      return candidates.reduce((a, b) => (a.updatedAt > b.updatedAt ? a : b));
-    }
-  }
-  return (
-    active.find((ws) => ws.cwd === options.inputCwd) ??
-    active.find((ws) => ws.cwd === options.repoRoot) ??
-    null
-  );
-}
-
-async function findWorkspaceForSource(options: {
-  inputCwd: string;
-  repoRoot: string;
-  workspaceRegistry: Pick<WorkspaceRegistry, "list">;
-}): Promise<PersistedWorkspaceRecord | null> {
-  const workspaces = await options.workspaceRegistry.list();
-  return (
-    workspaces.find((workspace) => workspace.cwd === options.inputCwd && !workspace.archivedAt) ??
-    workspaces.find((workspace) => workspace.cwd === options.repoRoot && !workspace.archivedAt) ??
-    null
-  );
 }

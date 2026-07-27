@@ -210,6 +210,7 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           PASEO_DESKTOP_SMOKE: "1"
+          PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke
         run: |
           set -euo pipefail
           build_args=(-- --publish never --mac --${{ matrix.electron_arch }})
@@ -225,6 +226,15 @@ jobs:
             build_args+=("-c.mac.notarize=false")
           fi
           npm run build:desktop "${build_args[@]}"
+
+      - name: Upload packaged smoke diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-smoke-macos-${{ matrix.electron_arch }}
+          path: ${{ runner.temp }}/desktop-smoke
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload desktop artifacts to release
         if: env.SHOULD_PUBLISH == 'true' && env.IS_SMOKE_TAG != 'true'
@@ -309,7 +319,7 @@ jobs:
           NODE
 
       - name: Install Linux smoke display
-        run: sudo apt-get update && sudo apt-get install -y xvfb
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth
 
       - name: Build desktop release
         shell: bash
@@ -317,6 +327,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EP_GH_IGNORE_TIME: true
           PASEO_DESKTOP_SMOKE: "1"
+          PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke
         run: |
           set -euo pipefail
           build_args=(-- --publish never --linux --x64)
@@ -325,6 +336,15 @@ jobs:
           build_args+=("-c.publish.owner=${GITHUB_REPOSITORY%/*}")
           build_args+=("-c.publish.repo=${GITHUB_REPOSITORY#*/}")
           npm run build:desktop "${build_args[@]}"
+
+      - name: Upload packaged smoke diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-smoke-linux-x64
+          path: ${{ runner.temp }}/desktop-smoke
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload desktop artifacts to release
         if: env.SHOULD_PUBLISH == 'true' && env.IS_SMOKE_TAG != 'true'
@@ -414,6 +434,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EP_GH_IGNORE_TIME: true
           PASEO_DESKTOP_SMOKE: "1"
+          PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke
         run: |
           set -euo pipefail
           build_args=(-- --publish never --win --x64 --arm64)
@@ -422,6 +443,15 @@ jobs:
           build_args+=("-c.publish.owner=${GITHUB_REPOSITORY%/*}")
           build_args+=("-c.publish.repo=${GITHUB_REPOSITORY#*/}")
           npm run build:desktop "${build_args[@]}"
+
+      - name: Upload packaged smoke diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-smoke-windows-x64
+          path: ${{ runner.temp }}/desktop-smoke
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload desktop artifacts to release
         if: env.SHOULD_PUBLISH == 'true' && env.IS_SMOKE_TAG != 'true'
