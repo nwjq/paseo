@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import type { WorkspaceGitService } from "./workspace-git-service.js";
-import { areEquivalentPaths, getRealpathAwareRelativePath } from "../utils/path.js";
+import { createRealpathAwarePathMatcher, getRealpathAwareRelativePath } from "../utils/path.js";
 import type { PersistedWorkspaceRecord, WorkspaceRegistry } from "./workspace-registry.js";
 import type { WorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
 import {
@@ -147,14 +147,14 @@ async function planWorkspaceCwdForWorktree(
   const requestedCwd = resolve(input.cwd);
   const requestedCheckout = await workspaceGitService.getCheckout(requestedCwd);
   const requestedWorktreePath = requestedCheckout.worktreeRoot ?? requestedCwd;
-  const sourceWorkspace = await findSourceWorkspaceForWorktree({
+  const inferredSourceWorkspace = await findSourceWorkspaceForRepoRootInference({
     inputCwd: requestedCwd,
     projectId: input.projectId,
     repoRoot: requestedWorktreePath,
     workspaceRegistry: input.workspaceRegistry,
   });
-  const normalizedInputCwd = resolve(sourceWorkspace?.cwd ?? requestedCwd);
-  const sourceCheckout = areEquivalentPaths(normalizedInputCwd, requestedCwd)
+  const normalizedInputCwd = resolve(inferredSourceWorkspace?.cwd ?? requestedCwd);
+  const sourceCheckout = createRealpathAwarePathMatcher(requestedCwd)(normalizedInputCwd)
     ? requestedCheckout
     : await workspaceGitService.getCheckout(normalizedInputCwd);
   const sourceWorktreePath = sourceCheckout.worktreeRoot ?? normalizedInputCwd;
@@ -165,26 +165,25 @@ async function planWorkspaceCwdForWorktree(
   return { inputCwd: normalizedInputCwd, relativeWorkspaceCwd };
 }
 
-async function findSourceWorkspaceForWorktree(options: {
+// When the app sends the repo root as cwd but includes a projectId whose active
+// non-worktree workspace lives in a subdirectory, prefer that subdirectory.
+// Explicit subdirectory cwds are never remapped.
+async function findSourceWorkspaceForRepoRootInference(options: {
   inputCwd: string;
   projectId?: string;
   repoRoot: string;
   workspaceRegistry: Pick<WorkspaceRegistry, "list">;
 }): Promise<PersistedWorkspaceRecord | null> {
+  if (!options.projectId) return null;
+  if (!createRealpathAwarePathMatcher(options.repoRoot)(options.inputCwd)) return null;
+
   const workspaces = await options.workspaceRegistry.list();
-  const active = workspaces.filter((ws) => !ws.archivedAt && ws.kind !== "worktree");
-  if (options.projectId) {
-    const candidates = active.filter((ws) => ws.projectId === options.projectId);
-    if (candidates.length === 1) return candidates[0];
-    if (candidates.length > 1) {
-      return candidates.reduce((a, b) => (a.updatedAt > b.updatedAt ? a : b));
-    }
-  }
-  return (
-    active.find((ws) => areEquivalentPaths(ws.cwd, options.inputCwd)) ??
-    active.find((ws) => areEquivalentPaths(ws.cwd, options.repoRoot)) ??
-    null
+  const candidates = workspaces.filter(
+    (ws) => !ws.archivedAt && ws.kind !== "worktree" && ws.projectId === options.projectId,
   );
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0];
+  return candidates.reduce((a, b) => (a.updatedAt > b.updatedAt ? a : b));
 }
 
 export async function attemptFirstAgentBranchAutoName(options: {
