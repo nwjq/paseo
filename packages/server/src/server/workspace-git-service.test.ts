@@ -263,6 +263,7 @@ interface CreateServiceTestOptions {
   resolveAbsoluteGitDir?: ReturnType<typeof vi.fn>;
   hasOriginRemote?: ReturnType<typeof vi.fn>;
   runGitFetch?: ReturnType<typeof vi.fn>;
+  directoryExists?: ReturnType<typeof vi.fn>;
   runGitCommand?: ReturnType<typeof vi.fn>;
   readdir?: ReturnType<typeof vi.fn>;
   watch?: ReturnType<typeof vi.fn>;
@@ -284,6 +285,7 @@ function buildDefaultTestServiceDeps() {
     resolveAbsoluteGitDir: vi.fn(async () => join(REPO_CWD, ".git")),
     hasOriginRemote: vi.fn(async () => false),
     runGitFetch: vi.fn(async () => {}),
+    directoryExists: vi.fn(async () => true),
     runGitCommand: vi.fn(async () => ({
       stdout: `${REPO_CWD}\n`,
       stderr: "",
@@ -600,6 +602,78 @@ describe("WorkspaceGitServiceImpl", () => {
 
     first.unsubscribe();
     second.unsubscribe();
+    service.dispose();
+  });
+
+  test("repo-level fetch moves to a surviving workspace when its directory is deleted", async () => {
+    const deletedCwd = join(REPO_CWD, "packages", "gone");
+    const runGitFetch = vi.fn(async () => {});
+    const directoryExists = vi.fn(async (cwd: string) => cwd !== deletedCwd);
+    const hasOriginRemote = vi.fn(async () => true);
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
+      ...createCheckoutSnapshotFacts(cwd),
+      gitCommonDir: join(REPO_CWD, ".git"),
+      absoluteGitDir: join(REPO_CWD, ".git"),
+    }));
+
+    const service = createService({
+      getCheckoutSnapshotFacts,
+      resolveAbsoluteGitDir: vi.fn(async () => join(REPO_CWD, ".git")),
+      hasOriginRemote,
+      runGitFetch,
+      directoryExists,
+    });
+
+    // The first workspace registered for the repo is the one that owns the fetch cwd.
+    const doomed = service.registerWorkspace({ cwd: deletedCwd }, vi.fn());
+    const surviving = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    await vi.waitFor(() => {
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
+    });
+    await flushPromises();
+
+    await vi.advanceTimersByTimeAsync(180_000);
+    await flushPromises();
+
+    expect(runGitFetch).toHaveBeenCalled();
+    expect(runGitFetch).toHaveBeenLastCalledWith(REPO_CWD);
+    expect(runGitFetch).not.toHaveBeenCalledWith(deletedCwd);
+
+    doomed.unsubscribe();
+    surviving.unsubscribe();
+    service.dispose();
+  });
+
+  test("repo-level fetch stops when every workspace directory is gone", async () => {
+    const runGitFetch = vi.fn(async () => {});
+    const directoryExists = vi.fn(async () => false);
+    const hasOriginRemote = vi.fn(async () => true);
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
+      ...createCheckoutSnapshotFacts(cwd),
+      gitCommonDir: join(REPO_CWD, ".git"),
+      absoluteGitDir: join(REPO_CWD, ".git"),
+    }));
+
+    const service = createService({
+      getCheckoutSnapshotFacts,
+      resolveAbsoluteGitDir: vi.fn(async () => join(REPO_CWD, ".git")),
+      hasOriginRemote,
+      runGitFetch,
+      directoryExists,
+    });
+
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+    await vi.waitFor(() => {
+      expect(getCheckoutSnapshotFacts).toHaveBeenCalled();
+    });
+    await flushPromises();
+
+    await vi.advanceTimersByTimeAsync(180_000);
+    await flushPromises();
+
+    expect(runGitFetch).not.toHaveBeenCalled();
+
+    subscription.unsubscribe();
     service.dispose();
   });
 

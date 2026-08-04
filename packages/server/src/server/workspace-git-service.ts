@@ -1,5 +1,5 @@
 import { watch, type FSWatcher } from "node:fs";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { LRUCache } from "lru-cache";
 import pLimit from "p-limit";
@@ -287,6 +287,7 @@ interface WorkspaceGitServiceDependencies {
   resolveAbsoluteGitDir: (cwd: string) => Promise<string | null>;
   hasOriginRemote: (cwd: string) => Promise<boolean>;
   runGitFetch: (cwd: string) => Promise<void>;
+  directoryExists: (path: string) => Promise<boolean>;
   runGitCommand: typeof runGitCommand;
   now: () => Date;
 }
@@ -374,6 +375,7 @@ function buildDefaultWorkspaceGitServiceDeps(): WorkspaceGitServiceDependencies 
     resolveAbsoluteGitDir,
     hasOriginRemote,
     runGitFetch,
+    directoryExists,
     runGitCommand,
     now: () => new Date(),
   };
@@ -1979,6 +1981,22 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
 
     target.fetchInFlight = true;
+
+    // The fetch cwd is pinned to whichever workspace created this target. That
+    // directory can be deleted (archived worktree) while other workspaces keep
+    // the repo target alive, so re-point at a live one instead of retrying a
+    // path that is gone.
+    const fetchCwd = await this.resolveRepoFetchCwd(target);
+    if (!fetchCwd) {
+      target.fetchInFlight = false;
+      this.logger.debug(
+        { repoGitRoot: target.repoGitRoot },
+        "Skipping background git fetch: no workspace directory remains",
+      );
+      return;
+    }
+    target.cwd = fetchCwd;
+
     this.logger.debug(
       { repoGitRoot: target.repoGitRoot, cwd: target.cwd },
       "Running background git fetch",
@@ -2008,6 +2026,18 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         }),
       );
     }
+  }
+
+  private async resolveRepoFetchCwd(target: RepoGitTarget): Promise<string | null> {
+    if (await this.deps.directoryExists(target.cwd)) {
+      return target.cwd;
+    }
+    for (const workspaceKey of target.workspaceKeys) {
+      if (workspaceKey !== target.cwd && (await this.deps.directoryExists(workspaceKey))) {
+        return workspaceKey;
+      }
+    }
+    return null;
   }
 
   private removeWorkspaceListener(cwd: string, listener: WorkspaceGitListener): void {
@@ -2289,4 +2319,12 @@ async function runGitFetch(cwd: string): Promise<void> {
     envOverlay: { GIT_TERMINAL_PROMPT: "0" },
     timeout: 120_000,
   });
+}
+
+async function directoryExists(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch {
+    return false;
+  }
 }
