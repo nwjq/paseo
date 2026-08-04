@@ -421,6 +421,34 @@ describe("findClaudeModel", () => {
   });
 });
 
+describe("Claude Opus 5 catalog", () => {
+  it("offers separate 1M and 200K Opus 5 entries", () => {
+    const opus5Models = getClaudeModels()
+      .filter((model) => model.id.startsWith("claude-opus-5"))
+      .map(({ id, label, contextWindowMaxTokens }) => ({ id, label, contextWindowMaxTokens }));
+
+    expect(opus5Models).toEqual([
+      { id: "claude-opus-5[1m]", label: "Opus 5 1M", contextWindowMaxTokens: 1_000_000 },
+      { id: "claude-opus-5", label: "Opus 5", contextWindowMaxTokens: 200_000 },
+    ]);
+  });
+
+  it("resolves dated Opus 5 IDs to their matching context variant", () => {
+    expect(findClaudeModel("claude-opus-5[1m]")?.id).toBe("claude-opus-5[1m]");
+    expect(findClaudeModel("claude-opus-5-20260724")?.id).toBe("claude-opus-5");
+    expect(findClaudeModel("claude-opus-5-20260724[1m]")?.id).toBe("claude-opus-5[1m]");
+    expect(findClaudeModel("claude-opus-5[1m]")?.contextWindowMaxTokens).toBe(1_000_000);
+    expect(findClaudeModel("claude-opus-5")?.contextWindowMaxTokens).toBe(200_000);
+  });
+
+  it("keeps disabled thinking available for agents persisted on the retired 1M ID", () => {
+    expect(resolveClaudeDisabledThinkingForModel("claude-opus-5[1m]")).toEqual({
+      supported: true,
+      fallbackThinkingOptionId: "low",
+    });
+  });
+});
+
 describe("claudeManifestModelSupportsFastMode", () => {
   it("keeps fast mode strict to first-party manifest model IDs", () => {
     expect(normalizeClaudeManifestModelId("openrouter/anthropic/claude-opus-4-8")).toBeNull();
