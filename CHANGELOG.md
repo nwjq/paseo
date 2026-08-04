@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.6-beta.1 - 2026-08-04
+
+### Improved
+
+- Opus 5 stays available as separate 1M and 200K context entries in the model list
+- Personal fork desktop builds can publish self-use Mac artifacts without Apple signing
+- Personal fork desktop builds stay on the fork update channel
+- Personal fork releases can keep GitHub Releases trimmed automatically
+- Android APK beta builds can complete without EAS credentials in forked release pipelines
+
+### Fixed
+
+- Worktree setup scripts run again for workspaces opened from a repository subdirectory
+- Workspaces created from repository subdirectories keep the correct folder through worktree and archive flows
+- Creating a worktree from a subdirectory project still lands in that subdirectory even when the app sends the repo root
+
 ## 0.2.5 - 2026-07-30
 
 ### Fixed
@@ -63,20 +79,6 @@
 - Proxied services preserve ports in redirects ([#2288](https://github.com/getpaseo/paseo/pull/2288) by [@cleiter](https://github.com/cleiter))
 - Provider settings open correctly above the model selector ([#2476](https://github.com/getpaseo/paseo/pull/2476))
 - Clicking the file editor correctly focuses its pane ([#2457](https://github.com/getpaseo/paseo/pull/2457))
-
-## 0.2.3-beta.1 - 2026-07-27
-
-### Improved
-
-- Personal fork desktop builds can publish self-use Mac artifacts without Apple signing
-- Personal fork desktop builds stay on the fork update channel
-- Personal fork releases can keep GitHub Releases trimmed automatically
-- Android APK beta builds can complete without EAS credentials in forked release pipelines
-
-### Fixed
-
-- Workspaces created from repository subdirectories keep the correct folder through worktree and archive flows
-- Creating a worktree from a subdirectory project still lands in that subdirectory even when the app sends the repo root
 
 ## 0.2.2 - 2026-07-25
 
