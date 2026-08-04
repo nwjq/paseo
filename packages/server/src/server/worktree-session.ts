@@ -27,6 +27,7 @@ import type { CheckoutExistingBranchResult } from "../utils/checkout-git.js";
 import { expandTilde } from "../utils/path.js";
 import {
   getWorktreeSetupCommands,
+  resolveWorktreeConfigCwd,
   resolveWorktreeRuntimeEnv,
   runWorktreeSetupCommands,
   slugify,
@@ -725,7 +726,11 @@ export async function runWorktreeSetupInBackground(
         emitSetupProgress("completed", null);
       } else {
         const workspaceCwd = options.workspaceCwd ?? worktree.worktreePath;
-        const setupCommands = getWorktreeSetupCommands(workspaceCwd);
+        const setupCwd = resolveWorktreeConfigCwd({
+          workspaceCwd,
+          worktreePath: worktree.worktreePath,
+        });
+        const setupCommands = getWorktreeSetupCommands(setupCwd);
         if (setupCommands.length === 0) {
           setupStarted = true;
           emitSetupProgress("completed", null);
@@ -736,12 +741,12 @@ export async function runWorktreeSetupInBackground(
             repoRootPath: options.repoRoot,
           });
           dependencies.terminalManager?.registerCwdEnv({
-            cwd: workspaceCwd,
+            cwd: setupCwd,
             env: runtimeEnv,
           });
           setupStarted = true;
           setupResults = await runWorktreeSetupCommands({
-            worktreePath: workspaceCwd,
+            worktreePath: setupCwd,
             branchName: worktree.branchName,
             cleanupOnFailure: false,
             repoRootPath: options.repoRoot,

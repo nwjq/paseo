@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isPlatform } from "../test-utils/platform.js";
-import { getWorktreeSetupCommands, getWorktreeTeardownCommands } from "./worktree.js";
+import {
+  getWorktreeSetupCommands,
+  getWorktreeTeardownCommands,
+  resolveWorktreeConfigCwd,
+} from "./worktree.js";
 import {
   readPaseoConfigForEdit,
   statPaseoConfigPath,
@@ -187,5 +191,72 @@ describe("paseo config file substrate", () => {
       config: { scripts: { dev: { command: "npm run dev" } } },
       revision: statPaseoConfigPath(join(tempDir, "nested")),
     });
+  });
+});
+
+describe("resolveWorktreeConfigCwd", () => {
+  let worktreePath: string;
+
+  beforeEach(() => {
+    worktreePath = realpathSync(mkdtempSync(join(tmpdir(), "paseo-config-cwd-test-")));
+  });
+
+  afterEach(() => {
+    rmSync(worktreePath, { recursive: true, force: true });
+  });
+
+  it("falls back to the checkout config for a subdirectory workspace", () => {
+    const workspaceCwd = join(worktreePath, "packages", "app");
+    mkdirSync(workspaceCwd, { recursive: true });
+    writeFileSync(
+      join(worktreePath, "paseo.json"),
+      JSON.stringify({ worktree: { setup: "./packages/app/setup.sh" } }),
+    );
+
+    const configCwd = resolveWorktreeConfigCwd({ workspaceCwd, worktreePath });
+
+    expect(configCwd).toBe(worktreePath);
+    expect(getWorktreeSetupCommands(configCwd)).toEqual(["./packages/app/setup.sh"]);
+  });
+
+  it("prefers a config owned by the workspace subdirectory", () => {
+    const workspaceCwd = join(worktreePath, "packages", "app");
+    mkdirSync(workspaceCwd, { recursive: true });
+    writeFileSync(
+      join(worktreePath, "paseo.json"),
+      JSON.stringify({ worktree: { setup: "root" } }),
+    );
+    writeFileSync(join(workspaceCwd, "paseo.json"), JSON.stringify({ worktree: { setup: "app" } }));
+
+    const configCwd = resolveWorktreeConfigCwd({ workspaceCwd, worktreePath });
+
+    expect(configCwd).toBe(workspaceCwd);
+    expect(getWorktreeSetupCommands(configCwd)).toEqual(["app"]);
+  });
+
+  it("keeps the workspace cwd when no config exists anywhere in the checkout", () => {
+    const workspaceCwd = join(worktreePath, "packages", "app");
+    mkdirSync(workspaceCwd, { recursive: true });
+
+    expect(resolveWorktreeConfigCwd({ workspaceCwd, worktreePath })).toBe(workspaceCwd);
+  });
+
+  it("does not walk above the worktree root", () => {
+    const parentConfigDir = realpathSync(mkdtempSync(join(tmpdir(), "paseo-config-cwd-parent-")));
+    const nestedWorktree = join(parentConfigDir, "checkout");
+    const workspaceCwd = join(nestedWorktree, "packages", "app");
+    mkdirSync(workspaceCwd, { recursive: true });
+    try {
+      writeFileSync(
+        join(parentConfigDir, "paseo.json"),
+        JSON.stringify({ worktree: { setup: "outside-the-checkout" } }),
+      );
+
+      expect(resolveWorktreeConfigCwd({ workspaceCwd, worktreePath: nestedWorktree })).toBe(
+        workspaceCwd,
+      );
+    } finally {
+      rmSync(parentConfigDir, { recursive: true, force: true });
+    }
   });
 });

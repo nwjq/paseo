@@ -663,6 +663,58 @@ describe("runWorktreeSetupInBackground", () => {
     expect(existsSync(path.join(createdWorktree.worktreePath, "setup-cwd.txt"))).toBe(false);
   });
 
+  test("runs the checkout setup for a subdirectory workspace with no config of its own", async () => {
+    const { tempDir, repoDir } = createGitRepo({
+      paseoConfig: { worktree: { setup: ["pwd > setup-cwd.txt"] } },
+    });
+    cleanupPaths.push(tempDir);
+    const sourceWorkspaceCwd = path.join(repoDir, "packages", "app");
+    mkdirSync(sourceWorkspaceCwd, { recursive: true });
+    writeFileSync(path.join(sourceWorkspaceCwd, "index.ts"), "export {};\n");
+    execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add app"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+
+    const paseoHome = path.join(tempDir, ".paseo");
+    const createdWorktree = await createLegacyWorktreeForTest({
+      branchName: "feature-root-setup",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "feature-root-setup",
+      runSetup: false,
+      paseoHome,
+    });
+    const workspaceCwd = path.join(createdWorktree.worktreePath, "packages", "app");
+
+    await runWorktreeSetupInBackground(
+      {
+        paseoHome,
+        emitWorkspaceUpdateForWorkspaceId: async () => {},
+        cacheWorkspaceSetupSnapshot: () => {},
+        emit: () => {},
+        sessionLogger: createLogger(),
+        terminalManager: null,
+        archiveWorkspaceRecord: async () => {},
+      },
+      {
+        requestCwd: sourceWorkspaceCwd,
+        repoRoot: repoDir,
+        workspaceId: "ws-root-setup",
+        worktree: createdWorktree,
+        shouldBootstrap: true,
+        slug: "feature-root-setup",
+        worktreePath: createdWorktree.worktreePath,
+        workspaceCwd,
+      },
+    );
+
+    // The checkout owns the config, so its commands run from the checkout root.
+    expect(existsSync(path.join(createdWorktree.worktreePath, "setup-cwd.txt"))).toBe(true);
+    expect(existsSync(path.join(workspaceCwd, "setup-cwd.txt"))).toBe(false);
+  });
+
   test("emits running then completed snapshots for no-setup workspaces without auto-starting scripts", async () => {
     const { tempDir, repoDir } = createGitRepo({
       paseoConfig: {

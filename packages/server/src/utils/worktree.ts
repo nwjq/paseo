@@ -275,6 +275,36 @@ function readPaseoConfigOrThrow(repoRoot: string): PaseoConfig | null {
   return result.config;
 }
 
+/**
+ * Worktree lifecycle config (setup, teardown, terminals) lives in one paseo.json per checkout.
+ * A workspace rooted in a repository subdirectory owns no paseo.json of its own, so walk up to
+ * the worktree root to find the checkout's config. The returned directory is also where the
+ * commands must run: they are written relative to the file that declares them.
+ */
+export function resolveWorktreeConfigCwd(options: {
+  workspaceCwd: string;
+  worktreePath: string;
+}): string {
+  let candidate = options.workspaceCwd;
+  for (;;) {
+    if (existsSync(resolvePaseoConfigPath(candidate))) {
+      return candidate;
+    }
+    // The checkout boundary is also the config boundary: never look above the worktree root.
+    if (getRealpathAwareRelativePath(options.worktreePath, candidate) === "") {
+      return options.workspaceCwd;
+    }
+    const parent = dirname(candidate);
+    if (
+      parent === candidate ||
+      getRealpathAwareRelativePath(options.worktreePath, parent) === null
+    ) {
+      return options.workspaceCwd;
+    }
+    candidate = parent;
+  }
+}
+
 export function getWorktreeSetupCommands(repoRoot: string): string[] {
   return readPaseoConfigOrThrow(repoRoot)?.worktree?.setup ?? [];
 }
@@ -732,10 +762,14 @@ export async function runWorktreeTeardownCommands(options: {
   branchName?: string;
   repoRootPath?: string;
 }): Promise<WorktreeTeardownCommandResult[]> {
-  const teardownCwd = options.teardownCwd ?? options.worktreePath;
-  if (getRealpathAwareRelativePath(options.worktreePath, teardownCwd) === null) {
-    throw new Error(`Worktree teardown cwd is outside the worktree: ${teardownCwd}`);
+  const requestedTeardownCwd = options.teardownCwd ?? options.worktreePath;
+  if (getRealpathAwareRelativePath(options.worktreePath, requestedTeardownCwd) === null) {
+    throw new Error(`Worktree teardown cwd is outside the worktree: ${requestedTeardownCwd}`);
   }
+  const teardownCwd = resolveWorktreeConfigCwd({
+    workspaceCwd: requestedTeardownCwd,
+    worktreePath: options.worktreePath,
+  });
   const teardownCommands = getWorktreeTeardownCommands(teardownCwd);
   if (teardownCommands.length === 0) {
     return [];

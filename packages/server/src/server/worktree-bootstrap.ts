@@ -9,6 +9,7 @@ import {
   paseoConfigParseError,
   processCarriageReturns,
   readPaseoConfig,
+  resolveWorktreeConfigCwd,
   resolveWorktreeRuntimeEnv,
   runWorktreeSetupCommands,
   WorktreeSetupError,
@@ -506,7 +507,10 @@ async function runWorktreeTerminalBootstrap(
   options: RunAsyncWorktreeBootstrapOptions,
   runtimeEnv: WorktreeRuntimeEnv,
 ): Promise<void> {
-  const workspaceCwd = options.workspaceCwd ?? options.worktree.worktreePath;
+  const workspaceCwd = resolveWorktreeConfigCwd({
+    workspaceCwd: options.workspaceCwd ?? options.worktree.worktreePath,
+    worktreePath: options.worktree.worktreePath,
+  });
   const terminalSpecs = getWorktreeTerminalSpecs(workspaceCwd);
   if (terminalSpecs.length === 0) {
     return;
@@ -601,7 +605,10 @@ export async function runAsyncWorktreeBootstrap(
   let runtimeEnv: WorktreeRuntimeEnv | null = null;
   const emitLiveTimelineItem = options.emitLiveTimelineItem;
   const progressAccumulator = createWorktreeSetupProgressAccumulator();
-  const workspaceCwd = options.workspaceCwd ?? options.worktree.worktreePath;
+  const workspaceCwd = resolveWorktreeConfigCwd({
+    workspaceCwd: options.workspaceCwd ?? options.worktree.worktreePath,
+    worktreePath: options.worktree.worktreePath,
+  });
   let liveEmitQueue = Promise.resolve();
 
   const queueLiveRunningEmit = () => {
