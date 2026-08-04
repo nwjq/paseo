@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.6-beta.1 - 2026-08-04
+## 0.2.6-beta.2 - 2026-08-04
 
 ### Improved
 
@@ -13,6 +13,7 @@
 ### Fixed
 
 - Worktree setup scripts run again for workspaces opened from a repository subdirectory
+- Branch and pull request status keeps refreshing after you archive a worktree
 - Workspaces created from repository subdirectories keep the correct folder through worktree and archive flows
 - Creating a worktree from a subdirectory project still lands in that subdirectory even when the app sends the repo root
 
