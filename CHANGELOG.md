@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.2-beta.1 - 2026-08-10
+
+### Improved
+
+- Opus 5 stays available as separate 1M and 200K context entries in the model list
+- Personal fork desktop builds can publish self-use Mac artifacts without Apple signing
+- Personal fork desktop builds stay on the fork update channel
+- Personal fork releases can keep GitHub Releases trimmed automatically
+- Android APK beta builds can complete without EAS credentials in forked release pipelines
+
+### Fixed
+
+- Worktree setup scripts run again for workspaces opened from a repository subdirectory
+- Branch and pull request status keeps refreshing after you archive a worktree
+- Workspaces created from repository subdirectories keep the correct folder through worktree and archive flows
+- Creating a worktree from a subdirectory project still lands in that subdirectory even when the app sends the repo root
+
 ## 0.3.1 - 2026-08-09
 
 ### Added
@@ -107,23 +124,6 @@
 - New Workspace shows its isolation controls right away ([#2702](https://github.com/getpaseo/paseo/pull/2702))
 - Sidebar shortcuts leave focus mode ([#2717](https://github.com/getpaseo/paseo/pull/2717))
 - Agents started by the NixOS service no longer run in production mode ([#2697](https://github.com/getpaseo/paseo/pull/2697) by [@shin-sakata](https://github.com/shin-sakata))
-
-## 0.2.6-beta.2 - 2026-08-04
-
-### Improved
-
-- Opus 5 stays available as separate 1M and 200K context entries in the model list
-- Personal fork desktop builds can publish self-use Mac artifacts without Apple signing
-- Personal fork desktop builds stay on the fork update channel
-- Personal fork releases can keep GitHub Releases trimmed automatically
-- Android APK beta builds can complete without EAS credentials in forked release pipelines
-
-### Fixed
-
-- Worktree setup scripts run again for workspaces opened from a repository subdirectory
-- Branch and pull request status keeps refreshing after you archive a worktree
-- Workspaces created from repository subdirectories keep the correct folder through worktree and archive flows
-- Creating a worktree from a subdirectory project still lands in that subdirectory even when the app sends the repo root
 
 ## 0.2.5 - 2026-07-30
 
