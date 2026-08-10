@@ -48,6 +48,7 @@ import {
   createPaseoWorktreeCommand,
   listPaseoWorktreesCommand,
 } from "./worktree/commands.js";
+import type { WorkspaceSetupOperation } from "./workspace-setup-runtime.js";
 
 const SAFE_GIT_REF_PATTERN = /^[A-Za-z0-9._/-]+$/;
 
@@ -124,6 +125,7 @@ interface CreatePaseoWorktreeWorkflowDependencies extends CreatePaseoWorktreeInB
     workspace: PersistedWorkspaceRecord;
     firstAgentContext: FirstAgentContext;
   }) => void;
+  startWorkspaceSetup?: (workspaceId: string, operation: WorkspaceSetupOperation) => void;
 }
 
 interface AgentWorktreeSetupContinuationInput {
@@ -620,16 +622,26 @@ export async function createPaseoWorktreeWorkflow(
       );
     });
     if (setupContinuation.kind === "workspace") {
-      void runWorktreeSetupInBackground(dependencies, {
-        requestCwd: input.cwd,
-        repoRoot: createdWorktree.repoRoot,
-        workspaceId: workspace.workspaceId,
-        worktree: createdWorktree.worktree,
-        shouldBootstrap: createdWorktree.created,
-        slug,
-        worktreePath: createdWorktree.worktree.worktreePath,
-        workspaceCwd: workspace.cwd,
-      });
+      const runSetup = (signal: AbortSignal) =>
+        runWorktreeSetupInBackground(
+          dependencies,
+          {
+            requestCwd: input.cwd,
+            repoRoot: createdWorktree.repoRoot,
+            workspaceId: workspace.workspaceId,
+            worktree: createdWorktree.worktree,
+            shouldBootstrap: createdWorktree.created,
+            slug,
+            worktreePath: createdWorktree.worktree.worktreePath,
+            workspaceCwd: workspace.cwd,
+          },
+          signal,
+        );
+      if (dependencies.startWorkspaceSetup) {
+        dependencies.startWorkspaceSetup(workspace.workspaceId, runSetup);
+      } else {
+        void runSetup(new AbortController().signal);
+      }
     }
   }, 0);
 
@@ -688,6 +700,7 @@ export async function runWorktreeSetupInBackground(
     worktreePath: string;
     workspaceCwd?: string;
   },
+  signal?: AbortSignal,
 ): Promise<void> {
   let worktree: WorktreeConfig = options.worktree;
   let setupResults: WorktreeSetupCommandResult[] = [];
@@ -751,6 +764,7 @@ export async function runWorktreeSetupInBackground(
             cleanupOnFailure: false,
             repoRootPath: options.repoRoot,
             runtimeEnv,
+            signal,
             onEvent: (event) => {
               applyWorktreeSetupProgressEvent(progressAccumulator, event);
               emitSetupProgress("running", null);

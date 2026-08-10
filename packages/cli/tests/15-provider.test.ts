@@ -114,11 +114,6 @@ const EXPECTED_CLAUDE_CONTEXT_MODELS = [
     descriptionFragment: "200K context window",
   },
   {
-    id: "claude-fable-5[1m]",
-    model: "Fable 5 1M",
-    descriptionFragment: "1M context window",
-  },
-  {
     id: "claude-sonnet-5[1m]",
     model: "Sonnet 5 1M",
     descriptionFragment: "1M context window",

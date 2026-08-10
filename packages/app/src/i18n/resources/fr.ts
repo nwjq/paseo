@@ -66,6 +66,16 @@ export const fr: TranslationResources = {
       modelGroupLabel: "Modèle",
       modelSearchKeywords:
         "changer de modèle modifier le modèle définir le modèle sélectionner le modèle",
+      thinkingGroupLabel: "Raisonnement",
+      thinkingSearchKeywords: "raisonnement effort réflexion",
+      modeGroupLabel: "Mode",
+      modeSearchKeywords: "accès permission approbation mode",
+      planModeGroupLabel: "Mode plan",
+      planModeSearchKeywords: "plan planification mode plan",
+      fastModeGroupLabel: "Rapide",
+      fastModeSearchKeywords: "rapide vitesse faible latence",
+      settingOn: "Activé",
+      settingOff: "Désactivé",
     },
   },
   composer: {
@@ -73,9 +83,11 @@ export const fr: TranslationResources = {
       desktop: "Envoyez un message à l'agent, marquez@filesou utilisez/commandset/skills",
       mobile: "Message,@files,/commands",
       fallback: "Message...",
+      terminal: "Prompt",
     },
     input: {
       accessibilityLabel: "Agent de messagerie...",
+      terminalAccessibilityLabel: "Terminal prompt",
       focusHint: "{{shortcut}}pour se concentrer",
       addAttachment: "Ajouter une pièce jointe",
       interruptAgent: "Agent d'interruption",
@@ -104,6 +116,7 @@ export const fr: TranslationResources = {
     },
     attachments: {
       addImage: "Ajouter une image",
+      pasteImage: "Coller une image",
       addFile: "Upload file",
       addIssueOrPr: "Ajouter un problème ouPR",
       addIssueOrPr_mr: "Ajouter un problème ou MR",
@@ -129,6 +142,8 @@ export const fr: TranslationResources = {
       initialPromptRequired: "Une invite initiale est requise",
       alreadyLoading: "Déjà en cours de chargement",
       uploadFailed: "Failed to upload file",
+      noClipboardImage: "Aucune image dans le presse-papiers",
+      pasteImageFailed: "Impossible de coller l’image",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {
@@ -179,6 +194,7 @@ export const fr: TranslationResources = {
   agentStream: {
     empty: "Commencez à discuter avec cet agent...",
     scrollToBottom: "Faire défiler vers le bas",
+    historyLoadFailed: "Impossible de charger l’historique de l’agent",
     permission: {
       plan: "Plan",
       required: "Autorisation requise",
@@ -193,7 +209,7 @@ export const fr: TranslationResources = {
     states: {
       notFound: "Agentintrouvable",
       failedToLoad: "Échec du chargement de l'agent",
-      reconnecting: "Reconnexion...",
+      reconnecting: "Reconnexion",
       timelineSyncFailed: "Impossible d’actualiser l’historique de l’agent. Nouvelle tentative…",
       archivingTitle: "Agent d'archivage...",
       archivingSubtitle: "Veuillez patienter pendant que nous archivons cet agent.",
@@ -219,8 +235,13 @@ export const fr: TranslationResources = {
   sessions: {
     title: "Historique",
     empty: "Aucune séance pour l'instant",
+    noMatches: "Aucune séance correspondante",
+    tooManyMatches: "Trop de résultats — affinez la recherche",
+    hostLoadFailed: "{{host}} : Impossible de charger l'historique",
+    searchPlaceholder: "Rechercher dans l'historique",
     actions: {
       loadMore: "Charger plus",
+      clearSearch: "Effacer la recherche",
     },
   },
   agentList: {
@@ -374,7 +395,7 @@ export const fr: TranslationResources = {
       openFile: "Ouvrir le fichier",
       copyPath: "Copier le chemin",
       download: "Télécharger",
-      addToChat: "Ajouter au chat…",
+      addToChat: "Ajouter au chat",
       moreActions: "Plus de propositions",
     },
     fileExplorer: {
@@ -471,6 +492,7 @@ export const fr: TranslationResources = {
     },
     terminal: {
       hostDisconnected: "Hostn'est pas connecté",
+      updateHost: "Mettez à jour l’hôte pour utiliser le terminal natif.",
       unableToSubscribe: "Impossible de s'abonner au terminal",
     },
     tabs: {
@@ -850,6 +872,14 @@ export const fr: TranslationResources = {
           viewPullRequest: "Voir",
           openOn: "Ouvrir sur {{brand}}",
         },
+        checksSummary: {
+          passedLabel: "succès",
+          failedLabel: "échec",
+          runningLabel: "en cours",
+          passedAccessible: "Vérifications réussies",
+          failedAccessible: "Vérifications en échec",
+          runningAccessible: "Vérifications en cours",
+        },
         sections: {
           checks: "Chèques",
           pipeline: "Pipeline",
@@ -897,6 +927,38 @@ export const fr: TranslationResources = {
     },
   },
   sidebar: {
+    display: {
+      trigger: "Préférences d'affichage",
+      heading: "Affichage",
+      grouping: {
+        label: "Regroupement",
+        project: "Projet",
+        status: "Statut",
+      },
+      titleSource: {
+        label: "Titre",
+        title: "Titre",
+        branch: "Nom de branche",
+      },
+      show: {
+        label: "Afficher",
+        host: "Hôte",
+        changeRequest: "Pull request",
+        checks: "Vérifications",
+        services: "Services",
+        diff: "Statistiques de diff",
+        timestamp: "Dernière activité",
+      },
+      checks: {
+        iconAndText: "Icône et texte",
+        icon: "Icône seule",
+        none: "Masqué",
+      },
+      hostFilter: {
+        label: "Hôte",
+        all: "Tous les hôtes",
+      },
+    },
     pinned: {
       title: "Épinglés",
     },
@@ -922,7 +984,7 @@ export const fr: TranslationResources = {
       discord: "Discord",
       github: "Créer un ticket GitHub",
       whatsNew: "Nouveautés",
-      version: "Paseo {{version}}",
+      appName: "Paseo",
     },
     sections: {
       sessions: "Historique",
@@ -964,7 +1026,8 @@ export const fr: TranslationResources = {
     },
     workspace: {
       status: {
-        scriptsAvailable: "Scripts disponibles",
+        serviceRunning: "Service {{name}} en cours",
+        serviceUnhealthy: "Service {{name}} en échec",
         creating: "Création...",
       },
       actions: {
@@ -1026,14 +1089,29 @@ export const fr: TranslationResources = {
       composerStateRequired: "L'état du compositeur est requis",
       selectModel: "Sélectionnez un modèle",
     },
+    tooltips: {
+      project: "Choose the project",
+      host: "Choose the host",
+      isolation: "Choose the isolation level",
+      startingRef: "Choisissez par où commencer",
+      launch: "Choose what to launch",
+    },
     refPicker: {
       startingRef: "Réf de départ",
-      chooseStart: "Choisissez par où commencer",
       intoBase: "dans {{baseRef}}",
       searching: "Recherche...",
       noMatchingRefs: "Aucune référence correspondante.",
       searchPlaceholder: "Rechercher des succursales et des PR",
       title: "Commencer à partir de",
+    },
+    launch: {
+      title: "What to launch",
+      chat: "Chat",
+      terminal: "Terminal",
+      manageProfiles: "Manage profiles",
+      submit: "Launch",
+      promptPlaceholder: "Prompt {{name}}",
+      commandPlaceholder: "Run a command, or leave empty for a blank terminal",
     },
   },
   desktop: {
@@ -1202,11 +1280,12 @@ export const fr: TranslationResources = {
         installFailed: "Impossible d'installer les compétences d'orchestration.",
         updateFailed: "Impossible de mettre à jour les compétences d'orchestration.",
         uninstallFailed: "Impossible de désinstaller les compétences d'orchestration.",
+        saveSelectionFailed:
+          "Impossible d'enregistrer la sélection des compétences d'orchestration.",
       },
     },
   },
   rootError: {
-    kicker: "Une erreur s'est produite",
     title: "Paseo a rencontré un problème.",
     body: "Réessayez pour recharger l'application. Si cela continue, joignez les détails ci-dessous au signalement.",
     details: "Détails",
@@ -1457,9 +1536,21 @@ export const fr: TranslationResources = {
       loadingOffer: "Chargement de l'offre d'association...",
       failedToLoadOffer: "Échec du chargement de l'offre d'association.",
       relayDisabled: "Le relais n'est pas activé. Activer le relais pour coupler un appareil.",
+      enableTitle: "Activer le relais ?",
+      enableDescription:
+        "Le relais permet à cet appareil de se connecter depuis n’importe où. Le trafic de couplage est chiffré de bout en bout.",
+      relayDocs: "Fonctionnement du relais",
+      relayDocsAccessibility: "Lire comment fonctionne le relais Paseo",
+      enableRelay: "Activer le relais",
+      enablingRelay: "Activation...",
+      notNow: "Pas maintenant",
+      directConnectionHint:
+        "Sans relais, connectez-vous directement via TCP, Tailscale ou un autre VPN. Aucun code QR n’est créé.",
+      updateRequired: "Mettez à jour l’hôte pour activer le relais depuis Paseo Desktop.",
       unavailable: "Offre de jumelage indisponible.",
       hint: "Scannez ce codeQRavecPaseosur votre téléphone ou copiez le lien ci-dessous.",
       qrUnavailable: "CodeQRindisponible.",
+      qrAccessibility: "Code QR de couplage",
       retry: "Réessayer",
       copy: "Copie",
       copied: "Copié",
@@ -1537,7 +1628,9 @@ export const fr: TranslationResources = {
         cursor: "Ligne {{line}}, colonne {{column}}",
         preview: "Aperçu",
         source: "Source",
-        unavailableTitle: "Fichier indisponible sur le disque",
+        deletedTitle: "Fichier supprimé du disque",
+        checkFailedTitle: "Impossible de vérifier le fichier sur le disque",
+        preservedDescription: "La copie ouverte est conservée.",
         conflictDescription: "Le contenu local a été conservé. Choisissez la version à garder.",
         overwrite: "Écraser",
         reload: "Recharger",
@@ -1644,6 +1737,7 @@ export const fr: TranslationResources = {
       editor: "Éditeur",
       shortcuts: "Raccourcis",
       integrations: "Intégrations",
+      notifications: "Notifications",
       permissions: "Autorisations",
       diagnostics: "Diagnostic",
       about: "À propos",
@@ -1653,7 +1747,23 @@ export const fr: TranslationResources = {
       vimKeybindings: "Raccourcis Vim",
       vimHint: "S’applique aux fichiers source sur le web et le bureau.",
     },
+    notifications: {
+      title: "Notifications",
+      permission: "Autorisation des notifications",
+      refreshAccessibility: "Actualiser l’autorisation des notifications",
+      playSound: "Émettre un son",
+      playSoundHint: "Émet un son lorsqu’une notification de bureau arrive",
+      test: "Tester la notification",
+      testHint: "Envoie une notification avec ces réglages",
+      permissionRequired: "Autorisez l’accès aux notifications avant le test",
+      send: "Envoyer",
+      sending: "Envoi...",
+      sentTitle: "Notification de test envoyée",
+      sentDescription: "Paseo a transmis la notification au système d’exploitation.",
+      sendFailedTitle: "Impossible d’envoyer la notification de test",
+    },
     hostSections: {
+      projects: "Projets",
       connections: "Relations",
       agents: "Agents",
       workspaces: "Workspaces",
@@ -1726,6 +1836,7 @@ export const fr: TranslationResources = {
           es: "Español",
           fr: "Français",
           ja: "日本語",
+          ko: "한국어",
           ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "中文",
@@ -1734,6 +1845,11 @@ export const fr: TranslationResources = {
     },
     diagnostics: {
       title: "Diagnostic",
+      legacyTerminalRenderer: {
+        label: "Utiliser l’ancien rendu du terminal",
+        description: "Utilise l’ancien terminal WebView après la réouverture d’un terminal",
+        accessibilityLabel: "Utiliser l’ancien rendu du terminal",
+      },
       testAudio: "Tester le son",
       playTest: "Jouer à l'essai",
       playing: "Jouant...",
@@ -1795,11 +1911,16 @@ export const fr: TranslationResources = {
           midnight: "Minuit",
           claude: "Claude",
           ghostty: "Fantôme",
+          pureBlack: "Noir pur",
           auto: "Système",
         },
       },
       detailLevel: {
         title: "Niveau de détail",
+      },
+      chatOutline: {
+        title: "Plan de la discussion",
+        description: "Afficher un plan pour passer d’une requête à l’autre",
       },
       fonts: {
         title: "Polices",
@@ -1830,11 +1951,15 @@ export const fr: TranslationResources = {
       searchPlaceholder: "Rechercher des raccourcis",
       unavailableOnMobile: "Les raccourcis clavier ne sont disponibles que sur le bureau",
       capturePrompt: "Appuyez sur le raccourci...",
+      unassigned: "Non défini",
       actions: {
+        menu: "Actions pour {{name}}",
         done: "Fait",
         cancel: "Annuler",
+        bind: "Attribuer",
         rebind: "Relier",
-        reset: "Réinitialiser",
+        clear: "Effacer",
+        reset: "Rétablir la valeur par défaut",
         resetAll: "Tout réinitialiser",
       },
       sections: {
@@ -1913,6 +2038,16 @@ export const fr: TranslationResources = {
         uninstallTitle: "Désinstaller les compétencesPaseo?",
         uninstallMessage:
           "Supprime toutes les compétences d'orchestrationPaseode ~/.agents, ~/.claude, ~/.codex.",
+        choose: "Choisir les compétences",
+        chooseAll: "Toutes les compétences",
+        chooseAllHint:
+          "Gardez installées toutes les compétences fournies, y compris celles ajoutées plus tard.",
+        chooseList: "Compétences fournies",
+        chooseEmpty: "Cette version ne fournit aucune compétence.",
+        removeTitle: "Supprimer les compétences décochées ?",
+        removeMessage:
+          "{{skills}} seront supprimées de ~/.agents, ~/.claude et ~/.codex. Tout ce que vous avez ajouté dans ces dossiers de compétences est également supprimé.",
+        saveFailed: "Impossible d'enregistrer votre sélection de compétences.",
       },
       actions: {
         install: "Installer",
@@ -1920,7 +2055,10 @@ export const fr: TranslationResources = {
         installed: "Installé",
         update: "Mise à jour",
         working: "Fonctionnement...",
+        remove: "Supprimer",
         uninstall: "Désinstaller",
+        save: "Enregistrer",
+        saving: "Enregistrement...",
       },
       operations: {
         add: "Ajouter une compétence",
@@ -1930,20 +2068,52 @@ export const fr: TranslationResources = {
     },
     permissions: {
       title: "Autorisations",
-      notifications: "Notifications",
       microphone: "Microphone",
       refresh: "Rafraîchir",
       refreshing: "Rafraîchissant...",
       refreshAccessibility: "Actualiser les autorisations du bureau",
-      test: "Test",
       actions: {
         granted: "Accordé",
         request: "Demande",
         requesting: "Demander...",
-        busySuffix: "{{label}}...",
       },
     },
     host: {
+      appearance: {
+        title: "Apparence",
+        name: {
+          label: "Nom",
+        },
+        color: {
+          label: "Couleur",
+          accessibilityLabel: "Couleur, {{value}}",
+          options: {
+            none: "Par défaut",
+            violet: "Violet",
+            sky: "Ciel",
+            emerald: "Émeraude",
+            orange: "Orange",
+            pink: "Rose",
+            indigo: "Indigo",
+            teal: "Sarcelle",
+            red: "Rouge",
+            amber: "Ambre",
+            blue: "Bleu",
+          },
+        },
+        badge: {
+          label: "Badge de la barre latérale",
+          accessibilityLabel: "Badge de la barre latérale, {{value}}",
+          options: {
+            name: "Nom",
+            icon: "Icône seule",
+            hidden: "Masqué",
+          },
+        },
+        preview: {
+          workspaceName: "my-workspace",
+        },
+      },
       notFound: "Hostintrouvable",
       badges: {
         relay: "Relais",
@@ -2150,25 +2320,23 @@ export const fr: TranslationResources = {
       },
     },
     project: {
-      noEditableTarget:
-        "Nous n'avons pas de copie modifiable de ce projet sur aucun hôte connecté.",
+      noEditableTarget: "Ce projet n'est pas modifiable sur cet hôte.",
       backToProjects: "Retour aux projets",
-      switchHost: "Changer d'hôte",
-      rename: {
-        renamedToast: "Projet renommé",
-        errorFallback: "Impossible de renommer le projet",
-        renameLabel: "Renommer le projet",
-        resetLabel: "Réinitialiser le nom du projet par défaut",
-        projectNameLabel: "Nom du projet",
-        saveLabel: "Enregistrer le nom du projet",
-        cancelLabel: "Annuler le changement de nom",
-        reset: "Réinitialiser",
+      edit: {
+        title: "Modifier le projet",
+        name: "Nom",
+        nameLabel: "Nom du projet",
+        icon: "Icône",
+        chooseImage: "Choisir une image",
+        useAutomatic: "Utiliser l'automatique",
+        imageUrl: "URL d'image ou de site",
+        save: "Enregistrer",
+        savedToast: "Projet mis à jour",
       },
       readFailures: {
         invalidTitle: "paseo.json n'a pas pu être analysé",
         invalidDescription: "Corrigez le fichier sur le disque, puis rechargez.",
         missingTitle: "Cet hôte n'a pas ce projet",
-        missingWithHosts: "Basculez vers un autre hôte ci-dessus ou rechargez.",
         missingSingleHost: "L'hôte sélectionné n'a aucune trace de ce projet.",
         transportTitle: "Impossible de charger paseo.json",
         transportFallback: "L'hôte n'a pas répondu.",
