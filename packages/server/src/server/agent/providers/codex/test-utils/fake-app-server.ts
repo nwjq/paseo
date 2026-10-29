@@ -25,6 +25,13 @@ interface FakeSilentCommand {
   command: string;
   cwd: string;
 }
+interface FakeTerminalCommand {
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  processId: string;
+  command: string;
+}
 interface FakeTerminalInput {
   threadId: string;
   turnId: string;
@@ -47,12 +54,20 @@ type CodexAppServerChildProcess = ChildProcessWithoutNullStreams & {
 export interface FakeCodexAppServer {
   readonly child: CodexAppServerChildProcess;
   readonly recordedRollbacks: JsonObject[];
+  requests(): readonly JsonObject[];
   assertNoErrors(): void;
   waitForTurnStart(): Promise<JsonObject>;
+  waitForRequest(method: string): Promise<JsonObject>;
+  disconnect(): void;
   nextResponse(): Promise<string>;
   startsTurn(params: { threadId: string; turnId?: string }): void;
+  startsCompaction(params: { threadId: string; itemId: string }): void;
   updatesPlan(params: { threadId: string; steps: string[] }): void;
-  completeTurn(params?: { threadId?: string }): void;
+  completeTurn(params?: {
+    threadId?: string;
+    status?: "completed" | "failed" | "interrupted";
+    error?: { message: string } | null;
+  }): void;
   startsSubAgent(params: {
     callId: string;
     threadId: string;
@@ -73,17 +88,33 @@ export interface FakeCodexAppServer {
   completesCommand(params: FakeLegacyCommand): void;
   completesSilentCommand(params: FakeSilentCommand): void;
   completesSilentLegacyCommand(params: FakeSilentCommand): void;
+  startsTerminalCommand(params: FakeTerminalCommand): void;
   typesIntoTerminal(params: FakeTerminalInput): void;
   says(params: { threadId: string; itemId?: string; text: string; chunks?: string[] }): void;
   requestCommandApproval(params: {
     itemId: string;
+    approvalId?: string;
     threadId: string;
     turnId: string;
     command: string;
     cwd: string;
     reason: string;
   }): void;
-  waitForCommandApprovalDecision(itemId: string): Promise<unknown>;
+  /** Keyed by `approvalId` when the request carried one, otherwise by `itemId`. */
+  waitForCommandApprovalDecision(callbackId: string): Promise<unknown>;
+  requestFileChangeApproval(params: {
+    itemId: string;
+    threadId: string;
+    turnId: string;
+    reason: string;
+  }): void;
+  requestUserInput(params: {
+    itemId: string;
+    threadId: string;
+    turnId: string;
+    questions: Array<Record<string, unknown>>;
+  }): void;
+  waitForApprovalDecision(itemId: string): Promise<unknown>;
   requestMcpElicitation(params: {
     threadId: string;
     turnId: string | null;
@@ -200,6 +231,11 @@ export function createFakeCodexAppServer(
 
     Promise.resolve(handler(message.params))
       .then((result) => {
+        const rpcError = toJsonObject(result).__jsonRpcError;
+        if (rpcError) {
+          child.stdout.write(`${JSON.stringify({ id: message.id, error: rpcError })}\n`);
+          return undefined;
+        }
         child.stdout.write(`${JSON.stringify({ id: message.id, result })}\n`);
         return undefined;
       })
@@ -292,6 +328,9 @@ export function createFakeCodexAppServer(
   return {
     child,
     recordedRollbacks,
+    requests() {
+      return messages;
+    },
     assertNoErrors() {
       if (errors.length > 0) {
         throw errors[0];
@@ -303,6 +342,16 @@ export function createFakeCodexAppServer(
         "turn start request",
       );
       return toJsonObject(message.params);
+    },
+    async waitForRequest(method) {
+      const message = await waitForMessage(
+        (candidate) => candidate.method === method,
+        `${method} request`,
+      );
+      return toJsonObject(message.params);
+    },
+    disconnect() {
+      child.emit("exit", null, "SIGTERM");
     },
     nextResponse() {
       return new Promise<string>((resolve) => {
@@ -319,6 +368,12 @@ export function createFakeCodexAppServer(
           },
         })}\n`,
       );
+    },
+    startsCompaction(params) {
+      writeNotification("item/started", {
+        threadId: params.threadId,
+        item: { type: "contextCompaction", id: params.itemId },
+      });
     },
     updatesPlan(params) {
       child.stdout.write(
@@ -337,7 +392,10 @@ export function createFakeCodexAppServer(
           method: "turn/completed",
           params: {
             threadId: params.threadId ?? "thread-1",
-            turn: { status: "completed" },
+            turn: {
+              status: params.status ?? "completed",
+              error: params.error ?? null,
+            },
           },
         })}\n`,
       );
@@ -437,6 +495,19 @@ export function createFakeCodexAppServer(
         success: true,
       });
     },
+    startsTerminalCommand(params) {
+      writeNotification("item/started", {
+        threadId: params.threadId,
+        turnId: params.turnId,
+        item: {
+          type: "commandExecution",
+          id: params.itemId,
+          status: "inProgress",
+          command: params.command,
+          processId: params.processId,
+        },
+      });
+    },
     typesIntoTerminal(params) {
       writeNotification("item/commandExecution/terminalInteraction", {
         threadId: params.threadId,
@@ -470,7 +541,7 @@ export function createFakeCodexAppServer(
     requestCommandApproval(params) {
       const requestId = nextServerRequestId;
       nextServerRequestId += 1;
-      approvalRequestIds.set(params.itemId, requestId);
+      approvalRequestIds.set(params.approvalId ?? params.itemId, requestId);
       child.stdout.write(
         `${JSON.stringify({
           jsonrpc: "2.0",
@@ -480,7 +551,36 @@ export function createFakeCodexAppServer(
         })}\n`,
       );
     },
-    async waitForCommandApprovalDecision(itemId) {
+    async waitForCommandApprovalDecision(callbackId) {
+      return await this.waitForApprovalDecision(callbackId);
+    },
+    requestFileChangeApproval(params) {
+      const requestId = nextServerRequestId;
+      nextServerRequestId += 1;
+      approvalRequestIds.set(params.itemId, requestId);
+      child.stdout.write(
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: requestId,
+          method: "item/fileChange/requestApproval",
+          params,
+        })}\n`,
+      );
+    },
+    requestUserInput(params) {
+      const requestId = nextServerRequestId;
+      nextServerRequestId += 1;
+      approvalRequestIds.set(params.itemId, requestId);
+      child.stdout.write(
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: requestId,
+          method: "item/tool/requestUserInput",
+          params,
+        })}\n`,
+      );
+    },
+    async waitForApprovalDecision(itemId) {
       const requestId = approvalRequestIds.get(itemId);
       if (requestId === undefined) {
         throw new Error(`No pending fake Codex app-server approval for ${itemId}`);
@@ -541,7 +641,7 @@ function toJsonObject(value: unknown): JsonObject {
 type StreamEventType = AgentStreamEvent["type"];
 type StreamEventOfType<TType extends StreamEventType> = Extract<AgentStreamEvent, { type: TType }>;
 
-function waitForNextEvent<TType extends StreamEventType>(
+export function waitForNextEvent<TType extends StreamEventType>(
   session: AgentSession,
   type: TType,
   accepts?: (event: StreamEventOfType<TType>) => boolean,

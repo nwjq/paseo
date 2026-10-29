@@ -3,9 +3,11 @@ import { execFileSync } from "child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-
-import type { AgentTimelineItem } from "./agent/agent-sdk-types.js";
-import { runAsyncWorktreeBootstrap, spawnWorkspaceScript } from "./worktree-bootstrap.js";
+import {
+  buildWorktreeSetupDetail,
+  runWorktreeAutoTerminals,
+  spawnWorkspaceScript,
+} from "./worktree-bootstrap.js";
 import { ensureWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
 import { ScriptRouteStore } from "./script-proxy.js";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
@@ -13,6 +15,7 @@ import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js
 import {
   createWorktree as createWorktreePrimitive,
   type WorktreeConfig,
+  resolveWorktreeRuntimeEnv,
 } from "../utils/worktree.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { TerminalSession } from "../terminal/terminal.js";
@@ -57,13 +60,58 @@ async function createBootstrapWorktreeForTest(
       baseBranch: options.baseBranch,
       branchName: options.branchName,
     },
-    runSetup: false,
+
     paseoHome: options.paseoHome,
   });
   return { worktree, shouldBootstrap: true };
 }
 
-describe("runAsyncWorktreeBootstrap", () => {
+describe("workspace setup detail", () => {
+  it("serializes output only in command logs while retaining the legacy string field", () => {
+    const detail = buildWorktreeSetupDetail({
+      worktree: { worktreePath: "/workspace", branchName: "feature" },
+      results: [
+        {
+          command: "echo ready",
+          cwd: "/workspace",
+          stdout: "ready\n",
+          stderr: "",
+          exitCode: 0,
+          durationMs: 10,
+        },
+      ],
+    });
+    const serialized = JSON.stringify(detail);
+    expect(JSON.parse(serialized)).toMatchObject({
+      log: "",
+      commands: [{ log: "ready\n", status: "completed", exitCode: 0 }],
+    });
+    expect(serialized.split("ready\\n")).toHaveLength(2);
+  });
+  it("retains bounded per-command output and truncation without an aggregate copy", () => {
+    const detail = buildWorktreeSetupDetail({
+      worktree: { worktreePath: "/workspace", branchName: "feature" },
+      results: [
+        {
+          command: "large-output",
+          cwd: "/workspace",
+          stdout: "prefix-" + "x".repeat(100000) + "-suffix",
+          stderr: "",
+          exitCode: 0,
+          durationMs: 10,
+        },
+      ],
+    });
+    expect(detail.log).toBe("");
+    expect(detail.truncated).toBe(true);
+    expect(detail.commands[0]?.log).toContain("prefix-");
+    expect(detail.commands[0]?.log).toContain("-suffix");
+    expect(detail.commands[0]?.log).toContain("...<output truncated in the middle>...");
+    expect(Buffer.byteLength(detail.commands[0]!.log)).toBeLessThanOrEqual(64 * 1024);
+  });
+});
+
+describe("runWorktreeAutoTerminals", () => {
   let tempDir: string;
   let repoDir: string;
   let paseoHome: string;
@@ -92,218 +140,119 @@ describe("runAsyncWorktreeBootstrap", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it("does not fail setup when live timeline emission throws", async () => {
-    writeFileSync(
-      join(repoDir, "paseo.json"),
-      JSON.stringify({
-        worktree: {
-          setup: ['echo "ok"'],
+  it.each([".", "packages/app"])(
+    "waits for terminal output and runs checkout commands from their config directory (workspace: %s)",
+    async (workspaceRelativeCwd) => {
+      writeFileSync(
+        join(repoDir, "paseo.json"),
+        JSON.stringify({
+          worktree: {
+            terminals: [
+              {
+                name: "Ready Terminal",
+                command: "echo ready",
+              },
+            ],
+          },
+        }),
+      );
+      execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
+      execFileSync(
+        "git",
+        ["-c", "commit.gpgsign=false", "commit", "-m", "add terminal bootstrap config"],
+        {
+          cwd: repoDir,
+          stdio: "pipe",
         },
-      }),
-    );
-    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
-    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add setup"], {
-      cwd: repoDir,
-      stdio: "pipe",
-    });
+      );
 
-    const worktreeBootstrap = await createBootstrapWorktreeForTest({
-      cwd: repoDir,
-      branchName: "feature-live-failure",
-      baseBranch: "main",
-      worktreeSlug: "feature-live-failure",
-      paseoHome,
-    });
-
-    const persisted: AgentTimelineItem[] = [];
-    await expect(
-      runAsyncWorktreeBootstrap({
-        agentId: "agent-live-failure",
-        workspaceId: "ws-live-failure",
-        worktree: worktreeBootstrap.worktree,
-        shouldBootstrap: worktreeBootstrap.shouldBootstrap,
-        terminalManager: null,
-        appendTimelineItem: async (item) => {
-          persisted.push(item);
-          return true;
-        },
-        emitLiveTimelineItem: async () => {
-          throw new Error("live emit failed");
-        },
-      }),
-    ).resolves.toBeUndefined();
-
-    const persistedSetupItems = persisted.filter(
-      (item) => item.type === "tool_call" && item.name === "paseo_worktree_setup",
-    );
-    expect(persistedSetupItems).toHaveLength(1);
-    if (persistedSetupItems[0]?.type === "tool_call") {
-      expect(persistedSetupItems[0].status).toBe("completed");
-    }
-  });
-
-  it("truncates each command output to 64kb in the middle", async () => {
-    const largeOutputCommand =
-      "node -e \"process.stdout.write('prefix-'); process.stdout.write('x'.repeat(70000)); process.stdout.write('-suffix')\"";
-    writeFileSync(
-      join(repoDir, "paseo.json"),
-      JSON.stringify({
-        worktree: {
-          setup: [largeOutputCommand],
-        },
-      }),
-    );
-    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
-    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add large output setup"], {
-      cwd: repoDir,
-      stdio: "pipe",
-    });
-
-    const worktreeBootstrap = await createBootstrapWorktreeForTest({
-      cwd: repoDir,
-      branchName: "feature-large-output",
-      baseBranch: "main",
-      worktreeSlug: "feature-large-output",
-      paseoHome,
-    });
-
-    const persisted: AgentTimelineItem[] = [];
-    await runAsyncWorktreeBootstrap({
-      agentId: "agent-large-output",
-      workspaceId: "ws-large-output",
-      worktree: worktreeBootstrap.worktree,
-      shouldBootstrap: worktreeBootstrap.shouldBootstrap,
-      terminalManager: null,
-      appendTimelineItem: async (item) => {
-        persisted.push(item);
-        return true;
-      },
-      emitLiveTimelineItem: async () => true,
-    });
-
-    const persistedSetupItem = persisted.find(
-      (item): item is Extract<AgentTimelineItem, { type: "tool_call" }> =>
-        item.type === "tool_call" && item.name === "paseo_worktree_setup",
-    );
-    expect(persistedSetupItem).toBeDefined();
-    expect(persistedSetupItem?.detail.type).toBe("worktree_setup");
-    if (!persistedSetupItem || persistedSetupItem.detail.type !== "worktree_setup") {
-      throw new Error("Expected worktree_setup tool detail");
-    }
-
-    expect(persistedSetupItem.detail.truncated).toBe(true);
-    expect(persistedSetupItem.detail.log).toContain("prefix-");
-    expect(persistedSetupItem.detail.log).toContain("-suffix");
-    expect(persistedSetupItem.detail.log).toContain("...<output truncated in the middle>...");
-    expect(persistedSetupItem.detail.commands[0]?.log).toContain("prefix-");
-    expect(persistedSetupItem.detail.commands[0]?.log).toContain("-suffix");
-    expect(persistedSetupItem.detail.commands[0]?.log).toContain(
-      "...<output truncated in the middle>...",
-    );
-  });
-
-  it("waits for terminal output before sending bootstrap commands", async () => {
-    writeFileSync(
-      join(repoDir, "paseo.json"),
-      JSON.stringify({
-        worktree: {
-          terminals: [
-            {
-              name: "Ready Terminal",
-              command: "echo ready",
-            },
-          ],
-        },
-      }),
-    );
-    execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
-    execFileSync(
-      "git",
-      ["-c", "commit.gpgsign=false", "commit", "-m", "add terminal bootstrap config"],
-      {
+      const worktreeBootstrap = await createBootstrapWorktreeForTest({
         cwd: repoDir,
-        stdio: "pipe",
-      },
-    );
+        branchName: "feature-terminal-readiness",
+        baseBranch: "main",
+        worktreeSlug: "feature-terminal-readiness",
+        paseoHome,
+      });
 
-    const worktreeBootstrap = await createBootstrapWorktreeForTest({
-      cwd: repoDir,
-      branchName: "feature-terminal-readiness",
-      baseBranch: "main",
-      worktreeSlug: "feature-terminal-readiness",
-      paseoHome,
-    });
+      let readyAt = 0;
+      let sendAt = 0;
+      let outputListener: ((chunk: { data: string }) => void) | null = null;
+      const workspaceCwd = join(worktreeBootstrap.worktree.worktreePath, workspaceRelativeCwd);
+      mkdirSync(workspaceCwd, { recursive: true });
+      const createdTerminals: Array<{ cwd: string; workspaceId?: string }> = [];
+      const commands: string[] = [];
 
-    let readyAt = 0;
-    let sendAt = 0;
-    let outputListener: ((chunk: { data: string }) => void) | null = null;
+      await runWorktreeAutoTerminals({
+        workspaceId: "ws-terminal-readiness",
+        worktree: worktreeBootstrap.worktree,
+        workspaceCwd,
+        runtimeEnv: await resolveWorktreeRuntimeEnv(worktreeBootstrap.worktree),
+        terminalManager: {
+          async getTerminals() {
+            return [];
+          },
+          async createTerminal(options) {
+            createdTerminals.push({ cwd: options.cwd, workspaceId: options.workspaceId });
+            setTimeout(() => {
+              readyAt = Date.now();
+              outputListener?.({ data: "$ " });
+            }, 25);
+            return {
+              id: "term-ready",
+              name: options.name ?? "Terminal",
+              cwd: options.cwd,
+              send: (message) => {
+                if (message.type === "input") commands.push(message.data);
+                sendAt = Date.now();
+              },
+              subscribe: (listener) => {
+                outputListener = (chunk) => listener({ type: "output", data: chunk.data });
+                return () => {
+                  outputListener = null;
+                };
+              },
+              onExit: () => () => {},
+              onCommandFinished: () => () => {},
+              onTitleChange: () => () => {},
+              getSize: () => ({ rows: 0, cols: 0 }),
+              getTitle: () => undefined,
+              getExitInfo: () => null,
+              getState: () => ({
+                rows: 0,
+                cols: 0,
+                grid: [],
+                scrollback: [],
+                cursor: { row: 0, col: 0 },
+              }),
+              kill: () => {},
+              killAndWait: async () => {},
+            };
+          },
+          registerCwdEnv() {},
+          getTerminal() {
+            return undefined;
+          },
+          killTerminal() {},
+          async killTerminalAndWait() {},
+          listDirectories() {
+            return [];
+          },
+          killAll() {},
+          subscribeTerminalsChanged() {
+            return () => {};
+          },
+        },
+      });
 
-    await runAsyncWorktreeBootstrap({
-      agentId: "agent-terminal-readiness",
-      workspaceId: "ws-terminal-readiness",
-      worktree: worktreeBootstrap.worktree,
-      shouldBootstrap: worktreeBootstrap.shouldBootstrap,
-      terminalManager: {
-        async getTerminals() {
-          return [];
-        },
-        async createTerminal(options) {
-          setTimeout(() => {
-            readyAt = Date.now();
-            outputListener?.({ data: "$ " });
-          }, 25);
-          return {
-            id: "term-ready",
-            name: options.name ?? "Terminal",
-            cwd: options.cwd,
-            send: () => {
-              sendAt = Date.now();
-            },
-            subscribe: (listener) => {
-              outputListener = (chunk) => listener({ type: "output", data: chunk.data });
-              return () => {
-                outputListener = null;
-              };
-            },
-            onExit: () => () => {},
-            onCommandFinished: () => () => {},
-            onTitleChange: () => () => {},
-            getSize: () => ({ rows: 0, cols: 0 }),
-            getTitle: () => undefined,
-            getExitInfo: () => null,
-            getState: () => ({
-              rows: 0,
-              cols: 0,
-              grid: [],
-              scrollback: [],
-              cursor: { row: 0, col: 0 },
-            }),
-            kill: () => {},
-            killAndWait: async () => {},
-          };
-        },
-        registerCwdEnv() {},
-        getTerminal() {
-          return undefined;
-        },
-        killTerminal() {},
-        async killTerminalAndWait() {},
-        listDirectories() {
-          return [];
-        },
-        killAll() {},
-        subscribeTerminalsChanged() {
-          return () => {};
-        },
-      },
-      appendTimelineItem: async () => true,
-      emitLiveTimelineItem: async () => true,
-    });
-
-    expect(readyAt).toBeGreaterThan(0);
-    expect(sendAt).toBeGreaterThan(0);
-    expect(sendAt).toBeGreaterThanOrEqual(readyAt);
-  });
+      expect(readyAt).toBeGreaterThan(0);
+      expect(sendAt).toBeGreaterThan(0);
+      expect(createdTerminals).toEqual([
+        { cwd: worktreeBootstrap.worktree.worktreePath, workspaceId: "ws-terminal-readiness" },
+      ]);
+      expect(commands).toEqual(["echo ready\r"]);
+      expect(sendAt).toBeGreaterThanOrEqual(readyAt);
+    },
+  );
 
   interface CreateTerminalCall {
     cwd: string;
@@ -834,6 +783,54 @@ describe("runAsyncWorktreeBootstrap", () => {
       type: "service",
       lifecycle: "running",
       exitCode: null,
+    });
+  });
+
+  it("starts a service added to paseo.json without restarting the daemon", async () => {
+    const backend = {
+      type: "service" as const,
+      command: "uv run uvicorn app.main:app --reload --port $PASEO_PORT",
+    };
+    commitPaseoScripts({ "backend-dev": backend });
+
+    const serviceProxy = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalRecords: StubTerminalRecord[] = [];
+    const options = {
+      repoRoot: repoDir,
+      workspaceId: repoDir,
+      projectSlug: "repo",
+      branchName: "feature-added-service",
+      daemonPort: 6767,
+      serviceProxy,
+      runtimeStore,
+      terminalManager: createStubTerminalManager(createTerminalCalls, terminalRecords),
+    };
+    const backendResult = await spawnWorkspaceScript({ ...options, scriptName: "backend-dev" });
+
+    writeFileSync(
+      join(repoDir, "paseo.json"),
+      JSON.stringify({
+        scripts: {
+          "backend-dev": backend,
+          web: { type: "service", command: "pnpm run dev -- --port $PASEO_PORT" },
+        },
+      }),
+    );
+    const webResult = await spawnWorkspaceScript({ ...options, scriptName: "web" });
+
+    expect(webResult.port).toEqual(expect.any(Number));
+    expect(webResult.port).not.toBe(backendResult.port);
+    expect(terminalRecords[1]?.sentInputs).toEqual(["pnpm run dev -- --port $PASEO_PORT\r"]);
+    expect(createTerminalCalls[1]?.env?.PASEO_PORT).toBe(String(webResult.port));
+    expect(createTerminalCalls[1]?.env?.PASEO_SERVICE_BACKEND_DEV_PORT).toBe(
+      String(backendResult.port),
+    );
+    expect(serviceProxy.listRoutes()).toHaveLength(2);
+    expect(runtimeStore.get({ workspaceId: repoDir, scriptName: "backend-dev" })).toMatchObject({
+      lifecycle: "running",
+      terminalId: backendResult.terminalId,
     });
   });
 

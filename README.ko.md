@@ -47,6 +47,17 @@
 - **여러 기기 지원:** iOS, Android, 데스크톱, 웹, CLI를 지원합니다. 데스크톱에서 시작해 휴대폰으로 확인하고 터미널에서 자동화할 수 있습니다.
 - **개인정보 보호 우선:** Paseo는 텔레메트리, 추적, 강제 로그인을 사용하지 않습니다.
 
+## 스폰서
+
+<!-- Sponsors: one cell per sponsor in the order of packages/website/src/data/sponsors.ts, then "become a sponsor" cells up to three. -->
+<table>
+  <tr>
+    <td align="center" width="33%"><a href="https://hoplite.sh/?utm_source=paseo&utm_medium=readme&utm_campaign=sponsor"><picture><source media="(prefers-color-scheme: dark)" srcset="packages/website/public/sponsors/hoplite-on-dark.svg"><img src="packages/website/public/sponsors/hoplite-on-light.svg" alt="Hoplite" height="40"></picture></a><br><sub>Cloud coding agents</sub></td>
+    <td align="center" width="33%"><a href="https://paseo.sh/sponsor">Paseo 스폰서 되기</a></td>
+    <td align="center" width="33%"><a href="https://paseo.sh/sponsor">Paseo 스폰서 되기</a></td>
+  </tr>
+</table>
+
 ## 시작하기
 
 Paseo는 코딩 에이전트를 관리하는 로컬 서버인 데몬을 실행합니다. 데스크톱 앱, 모바일 앱, 웹 앱, CLI 같은 클라이언트가 이 데몬에 연결합니다.
@@ -128,7 +139,6 @@ npx skills add getpaseo/paseo
 그런 다음 어떤 에이전트 대화에서든 아래 명령을 사용할 수 있습니다.
 
 - `/paseo-handoff` — 에이전트 간에 작업을 넘깁니다. Claude로 계획을 세운 뒤 Codex에 구현을 넘길 때 이 기능을 씁니다.
-- `/paseo-loop` — 명확한 완료 조건을 기준으로 에이전트를 반복 실행합니다(Ralph loop). 검증 에이전트를 추가할 수도 있습니다.
 - `/paseo-advisor` — 작업 자체를 넘기지 않고, 에이전트 하나를 조언자로 띄워 두 번째 의견을 받습니다.
 - `/paseo-committee` — 서로 다른 관점의 에이전트 두 개로 위원회를 구성해, 한 발 물러나 근본 원인을 분석하고 계획을 세웁니다.
 
@@ -162,6 +172,10 @@ npm run build:server
 npm run typecheck
 ```
 
+## Paseo 후원하기
+
+Paseo는 한 사람이 개발하며, 사용하는 분들의 후원으로 운영됩니다. [GitHub Sponsors](https://github.com/sponsors/boudra)로 후원할 수 있습니다. 회사는 매월 [Paseo를 후원](https://paseo.sh/sponsor#spot)하고 로고를 이 README 상단과 paseo.sh 홈페이지 및 문서에 게재할 수 있습니다.
+
 ## 관련 프로젝트
 
 - [getpaseo/paseo-relay](https://github.com/getpaseo/paseo-relay) — Elixir로 작성한 공식 분산형 릴레이
@@ -170,4 +184,4 @@ npm run typecheck
 
 ## 라이선스
 
-AGPL-3.0
+Apache-2.0

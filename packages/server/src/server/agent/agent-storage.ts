@@ -16,7 +16,7 @@ const SERIALIZABLE_CONFIG_SCHEMA = z
     model: z.string().nullable().optional(),
     thinkingOptionId: z.string().nullable().optional(),
     featureValues: z.record(z.string(), z.unknown()).nullable().optional(),
-    providerOptions: z.record(z.string(), z.json()).nullable().optional(),
+    providerOptions: z.record(z.string(), z.unknown()).nullable().optional(),
     toolPolicy: z
       .object({
         preapproved: z.array(
@@ -124,6 +124,24 @@ export class AgentStorage {
   async get(agentId: string): Promise<StoredAgentRecord | null> {
     await this.load();
     return this.cache.get(agentId) ?? null;
+  }
+
+  async listByProviderSession(
+    provider: string,
+    providerHandleId: string,
+  ): Promise<StoredAgentRecord[]> {
+    await this.load();
+    return Array.from(this.cache.values()).filter(
+      (record) =>
+        record.persistence?.provider === provider &&
+        (record.persistence.sessionId === providerHandleId ||
+          record.persistence.nativeHandle === providerHandleId),
+    );
+  }
+
+  async listByWorkspace(workspaceId: string): Promise<StoredAgentRecord[]> {
+    await this.load();
+    return Array.from(this.cache.values()).filter((record) => record.workspaceId === workspaceId);
   }
 
   async findByDaemonExecution(owner: DaemonAgentOwner): Promise<StoredAgentRecord | null> {

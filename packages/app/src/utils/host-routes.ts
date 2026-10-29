@@ -492,7 +492,12 @@ export function resolveKnownHostRoute(input: {
 export const SETTINGS_SECTION_SLUGS = [
   "general",
   "appearance",
+  "sidebar",
+  "chat",
+  "terminal",
+  "browser",
   "editor",
+  "files",
   "shortcuts",
   "integrations",
   "notifications",
@@ -512,10 +517,12 @@ export const HOST_SECTION_SLUGS = [
   "connections",
   "pair-device",
   "agents",
+  "metadata",
   "workspaces",
   "providers",
   "usage",
   "terminals",
+  "plugins",
   "host",
 ] as const;
 

@@ -9,6 +9,7 @@ import { hubStatusResult } from "./status-output.js";
 interface HubDisconnectOptions {
   force?: boolean;
   host?: string;
+  daemonTarget: import("../../utils/daemon-target.js").DaemonTarget;
   json?: boolean;
 }
 
@@ -21,7 +22,7 @@ export function runHubDisconnect(
   options: HubDisconnectOptions,
   dependencies: HubDisconnectDependencies,
 ) {
-  return withHubDaemon(dependencies.daemon, options.host, async (client) => {
+  return withHubDaemon(dependencies.daemon, options.daemonTarget, async (client) => {
     const current = (await client.getHubStatus()).status;
     if (current.hubOrigin !== null) {
       reportHubProgress(
@@ -31,7 +32,7 @@ export function runHubDisconnect(
       );
     }
     const response = await client.disconnectHub(options.force ?? false);
-    return hubStatusResult(response.status, response.warning, current.hubOrigin);
+    return hubStatusResult(response.status, response.warning);
   });
 }
 
@@ -42,7 +43,7 @@ export function addHubDisconnectCommand(
   addJsonAndDaemonHostOptions(
     parent
       .command("disconnect")
-      .option("--force", "Remove local authority even if the Hub is offline"),
+      .option("--force", "Remove local authority without notifying the Hub"),
   ).action(
     withOutput(async (...args) => {
       const options = args.at(-2) as HubDisconnectOptions;

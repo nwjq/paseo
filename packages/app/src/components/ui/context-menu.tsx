@@ -6,13 +6,12 @@ import {
   type Ref,
 } from "react";
 import {
-  Platform,
-  StatusBar,
   View,
   type GestureResponderEvent,
   type PressableProps,
   type PressableStateCallbackType,
   type StyleProp,
+  type ViewProps,
   type ViewStyle,
 } from "react-native";
 import { isNative, isWeb } from "@/constants/platform";
@@ -98,6 +97,7 @@ type TriggerStyleProp = StyleProp<ViewStyle> | ((state: MenuTriggerState) => Sty
 
 export function ContextMenuTrigger({
   children,
+  contextOnly = false,
   disabled,
   highlightStyle,
   style,
@@ -105,6 +105,7 @@ export function ContextMenuTrigger({
   enabledOnMobile = true,
   enabledOnWeb = true,
   longPressDelayMs,
+  onContextMenu,
   triggerRef,
   ...props
 }: PropsWithChildren<
@@ -115,7 +116,9 @@ export function ContextMenuTrigger({
     enabledOnMobile?: boolean;
     enabledOnWeb?: boolean;
     longPressDelayMs?: number;
+    onContextMenu?: (event: unknown) => void;
     triggerRef?: Ref<View | null>;
+    contextOnly?: boolean;
   }
 >): ReactElement {
   const ctx = useMenuContext("ContextMenuTrigger");
@@ -128,10 +131,9 @@ export function ContextMenuTrigger({
       const point = coerceEventPoint(event);
       if (!point) return;
 
-      const statusBarHeight = Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0;
       ctx.setAnchorRect({
         x: point.pageX,
-        y: point.pageY + statusBarHeight,
+        y: point.pageY,
         width: 0,
         height: 0,
       });
@@ -170,12 +172,13 @@ export function ContextMenuTrigger({
         if (isCallable(preventDefault)) preventDefault.call(event);
         if (isCallable(stopPropagation)) stopPropagation.call(event);
       }
+      onContextMenu?.(event);
       openAtEvent(event);
     },
-    [openAtEvent],
+    [onContextMenu, openAtEvent],
   );
 
-  const pressableStyle = useCallback(
+  const resolveDynamicStyle = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
       if (typeof style === "function") {
         return style({ pressed, hovered, open: ctx.open });
@@ -184,6 +187,25 @@ export function ContextMenuTrigger({
     },
     [style, ctx.open],
   );
+
+  if (contextOnly) {
+    const contextOnlyStyle =
+      typeof style === "function"
+        ? style({ pressed: false, hovered: false, open: ctx.open })
+        : style;
+    return (
+      <View
+        {...(props as ViewProps)}
+        ref={handleRef}
+        collapsable={false}
+        // @ts-ignore - onContextMenu is web-only and not in RN types.
+        onContextMenu={handleContextMenu}
+        style={contextOnlyStyle}
+      >
+        {children}
+      </View>
+    );
+  }
 
   return (
     <PressHighlight
@@ -195,7 +217,7 @@ export function ContextMenuTrigger({
       onLongPress={handleLongPress}
       // @ts-ignore - onContextMenu is web-only and not in RN types.
       onContextMenu={handleContextMenu}
-      style={pressableStyle}
+      style={typeof style === "function" ? resolveDynamicStyle : style}
       highlightStyle={highlightStyle}
     >
       {children}
