@@ -1084,6 +1084,23 @@ Paseo 0.8 新增插件标题栏按钮、自定义 Provider 和更丰富的聊天
 - 修复了 Claude Agent 需要等待 Paseo 十分钟 MCP 超时的问题 ([#3315](https://github.com/getpaseo/paseo/pull/3315))
 - 修复了 Hermes Agent 的 Copy resume command ([#3300](https://github.com/getpaseo/paseo/pull/3300) by [@desmond-rai](https://github.com/desmond-rai))
 
+## 0.3.2-beta.1 - 2026-08-10
+
+### 改进
+
+- 模型列表继续分别提供 Opus 5 的 1M 和 200K 上下文选项
+- 个人 fork 的桌面构建可以发布无需 Apple 签名凭据的 Mac 自用安装包
+- 个人 fork 的桌面构建继续使用 fork 的更新渠道
+- 个人 fork 可以自动清理旧的 GitHub Release
+- fork 的 Android APK 测试版构建无需 EAS 凭据即可完成
+
+### 修复
+
+- 从仓库子目录打开工作区时，worktree 初始化脚本恢复正常执行
+- 归档 worktree 后，分支和拉取请求状态继续刷新
+- 从仓库子目录创建的工作区在 worktree 创建和归档流程中保留正确目录
+- 从子目录项目创建 worktree 时，即使应用传入仓库根目录，也会进入对应子目录
+
 ## 0.3.1 - 2026-08-09
 
 ### 新增
