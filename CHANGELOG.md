@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.13.3-beta.1 - 2026-10-29
+
+### Improved
+
+- Updated this personal fork to upstream 0.13.2 while keeping its workspace, agent, and self-use build customizations
+- Kept repository subdirectories selected when creating worktrees and returning from archived workspaces
+- Kept Codex sessions and local skill discovery scoped to the selected working directory
+- Kept Opus 5 available as separate 200K and 1M context entries alongside the newer upstream models
+- Kept self-use Mac builds and Android APK builds available without Apple signing or EAS credentials, with official desktop auto-updates disabled
+
+### Fixed
+
+- Workspace setup, teardown, and automatic terminals use the repository-level configuration when a workspace opens a subdirectory
+- Automatic terminals started at the repository root remain visible in their subdirectory workspace
+- Git status continues refreshing through a surviving workspace after another worktree is archived
+
 ## 0.13.2 - 2026-10-26
 
 ### Fixed
