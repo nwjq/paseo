@@ -92,6 +92,12 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set up Java for Android
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
       - name: Build Android APK
         id: artifact
         shell: bash
@@ -103,7 +109,7 @@ jobs:
           APP_VARIANT=production npx expo prebuild --platform android --non-interactive --clean
 
           cd android
-          ./gradlew :app:assembleRelease -x lint -x lintVitalAnalyzeRelease -x lintVitalRelease -x generateReleaseLintModel -x generateReleaseLintVitalModel
+          ./gradlew :app:assembleRelease --stacktrace -x lint -x lintVitalAnalyzeRelease -x lintVitalRelease -x generateReleaseLintModel -x generateReleaseLintVitalModel
 
           apk_path="$(find app/build/outputs/apk/release -name '*.apk' -print | sort | head -n 1)"
           if [ -z "$apk_path" ]; then
