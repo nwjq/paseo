@@ -270,9 +270,9 @@ export function buildWorktreeSetupDetail(input: {
 }
 
 async function waitForTerminalBootstrapReadiness(
-  terminal: Pick<TerminalSession, "getState" | "subscribe">,
+  terminal: Pick<TerminalSession, "hasOutput" | "subscribe">,
 ): Promise<void> {
-  if (terminalHasOutput(terminal.getState())) {
+  if (terminal.hasOutput()) {
     return;
   }
 
@@ -305,24 +305,13 @@ async function waitForTerminalBootstrapReadiness(
       finish();
     });
 
-    if (terminalHasOutput(terminal.getState())) {
+    if (terminal.hasOutput()) {
       finish();
       return;
     }
 
     timeout = setTimeout(finish, WORKTREE_BOOTSTRAP_TERMINAL_READY_TIMEOUT_MS);
   });
-}
-
-function terminalHasOutput(state: ReturnType<TerminalSession["getState"]>): boolean {
-  for (const row of [...state.scrollback, ...state.grid]) {
-    for (const cell of row) {
-      if (cell.char.trim().length > 0) {
-        return true;
-      }
-    }
-  }
-  return false;
 }
 
 export async function runWorktreeAutoTerminals(options: {
@@ -335,12 +324,12 @@ export async function runWorktreeAutoTerminals(options: {
 }): Promise<void> {
   if (!options.terminalManager) return;
   const terminalManager = options.terminalManager;
-  const configCwd = resolveWorktreeConfigCwd({
+  const configCwd = await resolveWorktreeConfigCwd({
     workspaceCwd: options.workspaceCwd,
     worktreePath: options.worktree.worktreePath,
   });
   await Promise.all(
-    getWorktreeTerminalSpecs(configCwd).map(async (spec) => {
+    (await getWorktreeTerminalSpecs(configCwd)).map(async (spec) => {
       try {
         const terminal = await terminalManager.createTerminal({
           cwd: configCwd,
@@ -550,7 +539,7 @@ export async function spawnWorkspaceScript(
     logger,
     onLifecycleChanged,
   } = options;
-  const configResult = readPaseoConfig(repoRoot);
+  const configResult = await readPaseoConfig(repoRoot);
   if (!configResult.ok) {
     throw paseoConfigParseError(configResult);
   }

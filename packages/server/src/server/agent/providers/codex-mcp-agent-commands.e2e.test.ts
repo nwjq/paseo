@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 import { createDaemonTestContext, type DaemonTestContext } from "../../test-utils/index.js";
-import { getFullAccessConfig, isProviderAvailable } from "../../daemon-e2e/agent-configs.js";
+import { getFullAccessConfig } from "../../daemon-e2e/agent-configs.js";
 import { CodexAppServerAgentClient } from "./codex-app-server-agent.js";
 
 function tmpDir(prefix: string): string {
@@ -94,10 +94,6 @@ describe("codex agent commands E2E", () => {
   }, 30_000);
 
   test("lists exact-cwd local skills for draft composer commands through daemon", async () => {
-    if (!(await isProviderAvailable("codex"))) {
-      return;
-    }
-
     await ctx.cleanup();
     ctx = await createDaemonTestContext({
       agentClients: {
@@ -142,6 +138,7 @@ describe("codex agent commands E2E", () => {
         name: skillName,
         description: "Subdirectory-only Codex skill",
         argumentHint: "",
+        kind: "skill",
       });
     } finally {
       rmSync(workspaceRoot, { recursive: true, force: true });
@@ -149,10 +146,6 @@ describe("codex agent commands E2E", () => {
   }, 30_000);
 
   test("lists exact-cwd local skills after creating a Codex agent through daemon", async () => {
-    if (!(await isProviderAvailable("codex"))) {
-      return;
-    }
-
     await ctx.cleanup();
     ctx = await createDaemonTestContext({
       agentClients: {
@@ -193,6 +186,7 @@ describe("codex agent commands E2E", () => {
         name: skillName,
         description: "Created-agent subdirectory Codex skill",
         argumentHint: "",
+        kind: "skill",
       });
     } finally {
       rmSync(workspaceRoot, { recursive: true, force: true });

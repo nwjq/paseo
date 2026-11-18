@@ -1,3 +1,5 @@
+import type { JsonValue } from "@getpaseo/protocol/agent-types";
+import type { PluginLifecycle } from "./plugins/lifecycle/index.js";
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -33,6 +35,7 @@ export interface CreatePaseoWorktreeInput extends CreateWorktreeCoreInput {
   workspaceId?: string;
   projectId?: string;
   title?: string;
+  metadata?: Record<string, JsonValue>;
   background?: boolean;
   callerWorkspaceId?: string;
 }
@@ -59,8 +62,9 @@ export interface AttemptFirstAgentBranchAutoNameResult {
 }
 
 export interface CreatePaseoWorktreeDeps extends CreateWorktreeCoreDeps {
+  lifecycle?: Pick<PluginLifecycle, "wait" | "before">;
   workspaceGitService: WorkspaceGitService;
-  workspaceRegistry: Pick<WorkspaceRegistry, "list">;
+  workspaceRegistry: Pick<WorkspaceRegistry, "listActive">;
   workspaceProvisioning: Pick<WorkspaceProvisioningService, "createWorkspaceForWorktree">;
 }
 
@@ -85,7 +89,16 @@ async function createPaseoWorktreeWithPriority(
   );
   const createdWorktree = await createWorktreeCore(input, deps);
   try {
-    maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree });
+    if (createdWorktree.created) {
+      await deps.lifecycle?.wait("worktree.create.after", {
+        worktree: {
+          path: createdWorktree.worktree.worktreePath,
+          branch: createdWorktree.worktree.branchName,
+          sourceCheckout: workspaceCwdPlan.sourceCheckout,
+        },
+      });
+    }
+    await maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree, input });
     const workspaceCwd = mapWorkspaceRelativeCwdToWorktree({
       relativeWorkspaceCwd: workspaceCwdPlan.relativeWorkspaceCwd,
       targetWorktreePath: createdWorktree.worktree.worktreePath,
@@ -110,6 +123,7 @@ async function createPaseoWorktreeWithPriority(
       branch: createdWorktree.worktree.branchName || null,
       baseBranch: createdWorktree.worktree.comparisonBaseRef,
       title: input.title?.trim() || resolveFirstAgentPromptTitle(input.firstAgentContext),
+      metadata: input.metadata,
       expectsInitialAgent: Boolean(input.firstAgentContext),
       background: input.background,
       callerWorkspaceId: input.callerWorkspaceId,
@@ -164,10 +178,10 @@ async function planWorkspaceCwdForWorktree(
   input: {
     cwd: string;
     projectId?: string;
-    workspaceRegistry: Pick<WorkspaceRegistry, "list">;
+    workspaceRegistry: Pick<WorkspaceRegistry, "listActive">;
   },
   workspaceGitService: Pick<WorkspaceGitService, "getCheckout">,
-): Promise<{ inputCwd: string; relativeWorkspaceCwd: string }> {
+): Promise<{ inputCwd: string; relativeWorkspaceCwd: string; sourceCheckout: string }> {
   const requestedCwd = resolve(input.cwd);
   const requestedCheckout = await workspaceGitService.getCheckout(requestedCwd);
   const requestedWorktreePath = requestedCheckout.worktreeRoot ?? requestedCwd;
@@ -186,7 +200,7 @@ async function planWorkspaceCwdForWorktree(
   if (relativeWorkspaceCwd === null) {
     throw new Error(`Workspace cwd is outside its source worktree: ${normalizedInputCwd}`);
   }
-  return { inputCwd: normalizedInputCwd, relativeWorkspaceCwd };
+  return { inputCwd: normalizedInputCwd, relativeWorkspaceCwd, sourceCheckout: sourceWorktreePath };
 }
 
 // When the app sends the repo root as cwd but includes a projectId whose active
@@ -196,14 +210,14 @@ async function findSourceWorkspaceForRepoRootInference(options: {
   inputCwd: string;
   projectId?: string;
   repoRoot: string;
-  workspaceRegistry: Pick<WorkspaceRegistry, "list">;
+  workspaceRegistry: Pick<WorkspaceRegistry, "listActive">;
 }): Promise<PersistedWorkspaceRecord | null> {
   if (!options.projectId) return null;
   if (!createRealpathAwarePathMatcher(options.repoRoot)(options.inputCwd)) return null;
 
-  const workspaces = await options.workspaceRegistry.list();
+  const workspaces = await options.workspaceRegistry.listActive();
   const candidates = workspaces.filter(
-    (ws) => !ws.archivedAt && ws.kind !== "worktree" && ws.projectId === options.projectId,
+    (ws) => ws.kind !== "worktree" && ws.projectId === options.projectId,
   );
   if (candidates.length === 0) return null;
   if (candidates.length === 1) return candidates[0];
@@ -226,9 +240,9 @@ export async function attemptFirstAgentBranchAutoName(options: {
     return { attempted: false, renamed: false, branchName: null };
   }
 
-  let metadata: ReturnType<typeof readPaseoWorktreeMetadata>;
+  let metadata: Awaited<ReturnType<typeof readPaseoWorktreeMetadata>>;
   try {
-    metadata = readPaseoWorktreeMetadata(options.cwd);
+    metadata = await readPaseoWorktreeMetadata(options.cwd);
   } catch {
     return { attempted: false, renamed: false, branchName: null };
   }
@@ -243,11 +257,11 @@ export async function attemptFirstAgentBranchAutoName(options: {
   const getCurrentBranchImpl = options.getCurrentBranch ?? getCurrentBranch;
   const placeholderBranchName = metadata.firstAgentBranchAutoName.placeholderBranchName;
   if ((await getCurrentBranchImpl(options.cwd)) !== placeholderBranchName) {
-    markPaseoWorktreeFirstAgentBranchAutoNameAttempted(options.cwd);
+    await markPaseoWorktreeFirstAgentBranchAutoNameAttempted(options.cwd);
     return { attempted: true, renamed: false, branchName: null };
   }
 
-  markPaseoWorktreeFirstAgentBranchAutoNameAttempted(options.cwd);
+  await markPaseoWorktreeFirstAgentBranchAutoNameAttempted(options.cwd);
 
   const branchName = await options.generateBranchNameFromContext({
     cwd: options.cwd,
@@ -308,15 +322,20 @@ async function findAvailableBranchName(options: {
   return null;
 }
 
-function maybeMarkFirstAgentBranchAutoNameEligible(options: {
+async function maybeMarkFirstAgentBranchAutoNameEligible(options: {
   createdWorktree: Awaited<ReturnType<typeof createWorktreeCore>>;
-}): void {
-  const { createdWorktree } = options;
+  input: Pick<CreatePaseoWorktreeInput, "branchName">;
+}): Promise<void> {
+  const { createdWorktree, input } = options;
   if (!createdWorktree.created || createdWorktree.intent.kind !== "branch-off") {
     return;
   }
+  // A branch the caller named is their choice; only a placeholder slug is replaced.
+  if (input.branchName !== undefined) {
+    return;
+  }
 
-  writePaseoWorktreeFirstAgentBranchAutoNameMetadata(createdWorktree.worktree.worktreePath, {
+  await writePaseoWorktreeFirstAgentBranchAutoNameMetadata(createdWorktree.worktree.worktreePath, {
     placeholderBranchName: createdWorktree.worktree.branchName,
   });
 }
