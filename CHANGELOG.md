@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.16.2-beta.1 - 2026-11-18
+
+- Updated the personal fork to Paseo 0.16.1. Workspaces opened in a repository subdirectory retain that directory when creating worktrees, starting or resuming Codex, and returning from archive.
+- Usage now shows Antigravity's Gemini and Claude/GPT quota windows, including five-hour and weekly limits and their reset times. [Upstream contribution #6815](https://github.com/getpaseo/paseo/pull/6815)
+
 ## 0.16.1 - 2026-11-17
 
 ### Fixed

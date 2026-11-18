@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.16.2-beta.1 - 2026-11-18
+
+- 自用版已同步到 Paseo 0.16.1。从仓库子目录打开工作区后，新建 worktree、启动或恢复 Codex、从归档返回时，都会保留对应的子目录。
+- 用量面板现在可以查看 Antigravity 的 Gemini 和 Claude/GPT 额度，包括 5 小时和每周用量，以及各自的重置时间。[上游贡献 #6815](https://github.com/getpaseo/paseo/pull/6815)
+
 ## 0.16.1 - 2026-11-17
 
 ### 修复
