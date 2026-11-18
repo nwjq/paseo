@@ -109,7 +109,7 @@ jobs:
           APP_VARIANT=production npx expo prebuild --platform android --non-interactive --clean
 
           cd android
-          ./gradlew :app:assembleRelease --stacktrace -x lint -x lintVitalAnalyzeRelease -x lintVitalRelease -x generateReleaseLintModel -x generateReleaseLintVitalModel
+          ./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a --stacktrace -x lint -x lintVitalAnalyzeRelease -x lintVitalRelease -x generateReleaseLintModel -x generateReleaseLintVitalModel
 
           apk_path="$(find app/build/outputs/apk/release -name '*.apk' -print | sort | head -n 1)"
           if [ -z "$apk_path" ]; then
@@ -118,7 +118,7 @@ jobs:
             exit 1
           fi
 
-          asset_name="paseo-${RELEASE_TAG}-android.apk"
+          asset_name="paseo-${RELEASE_TAG}-android-arm64.apk"
           asset_path="$RUNNER_TEMP/$asset_name"
           unsigned_path="$RUNNER_TEMP/${asset_name%.apk}-unsigned.apk"
           aligned_path="$RUNNER_TEMP/${asset_name%.apk}-aligned.apk"
@@ -154,6 +154,11 @@ jobs:
             --out "$asset_path" \
             "$aligned_path"
           "$apksigner_bin" verify "$asset_path"
+          apk_abis="$(unzip -Z1 "$asset_path" | awk -F/ '$1 == "lib" && $3 ~ /\.so$/ { print $2 }' | sort -u)"
+          if [[ "$apk_abis" != "arm64-v8a" ]]; then
+            echo "Expected only arm64-v8a native libraries; found: $apk_abis" >&2
+            exit 1
+          fi
 
           echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
           echo "asset_path=$asset_path" >> "$GITHUB_OUTPUT"
