@@ -125,7 +125,34 @@ export function startDriver(options: DriverOptions): Driver {
     if (state === "ready") options.onExit(failure);
     if (state === "exited" || state === "stopping") return;
     state = "stopping";
-    cleanup = Promise.resolve(signalGroup(child, "SIGKILL"));
+    cleanup = (async () => {
+      try {
+        await signalGroup(child, "SIGKILL");
+      } catch (error) {
+        // On macOS, a CLI that exits after its error frame can still be a zombie here.
+        // Its process group returns EPERM until Node reaps it. Allow close to arrive,
+        // then retry; a real permission failure still rejects cleanup.
+        if (
+          process.platform !== "darwin" ||
+          !(error instanceof Error && "code" in error && error.code === "EPERM")
+        ) {
+          throw error;
+        }
+        let deadline: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            exited,
+            new Promise<void>((resolve) => {
+              deadline = setTimeout(resolve, 100);
+            }),
+          ]);
+        } finally {
+          clearTimeout(deadline);
+        }
+        await signalGroup(child, "SIGKILL");
+      }
+      await exited;
+    })();
     // The stop operation awaits cleanup and owns reporting its failure.
     void cleanup.catch(() => undefined);
   }
@@ -144,7 +171,7 @@ export function startDriver(options: DriverOptions): Driver {
       });
     },
     async stop(reason) {
-      if (process.platform === "win32") await cleanup;
+      await cleanup;
       if (state === "exited") return;
       if (state === "starting") rejectReady(new AntigravityError("Antigravity startup canceled"));
       clearTimeout(startupDeadline);

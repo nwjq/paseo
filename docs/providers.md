@@ -270,6 +270,13 @@ contract, account and window identity, provider-derived period names, login fall
 read-only credential rules. Usage adapters own the interpretation of provider fields; the app
 renders their names and resolves pins without provider-specific duration guesses.
 
+This fork carries [Antigravity usage PR #6815](https://github.com/getpaseo/paseo/pull/6815),
+based on `ec0c8d8f7c9473339e1dfa18fd5e4d4c53b278bc`. The CLI owns authentication for quota
+queries; the plugin does not copy or refresh credentials. On a fresh host, discovery uses
+the default CLI configuration until provider discovery supplies a resolved launch. If you
+override the command or account environment, refresh Antigravity in Providers before reading
+Usage so the report uses that launch. Recheck this limitation when taking a newer upstream patch.
+
 ---
 
 ## ACP Provider Checklist
